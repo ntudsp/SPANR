@@ -6,6 +6,7 @@ output: github_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
+library(rjson)
 library(plyr)
 library(dplyr)
 library(ggplot2)
@@ -22,10 +23,62 @@ Subject data was logged in JSON format via the NI WebVI platform.
 
 ## Including Code
 
+```{r dataClean, message=FALSE}
+
+#extract participant ID
+participantID <- as.numeric(gsub(".*?([0-9]+).*", 
+                                 "\\1", allDataJSON))
+
+#List of all files
+allDataJSON <- list.files(path = "../JSON file/",
+                        pattern = "*Data.json", full.names = TRUE) 
+
+allTrackSeqJSON <- list.files(path = "../JSON file/",
+                        pattern = "*List.json", full.names = TRUE)
+
+#extract response to questions from JSON
+spanrData <- ldply(allDataJSON,function(x) t(unlist(fromJSON(file = x))))
+trackseqData <- ldply(allTrackSeqJSON,function(x) t(unlist(fromJSON(file = x))))
+
+#load track type
+trackInfo <- read.csv(file = "../Soundtrack_Information.csv",header = TRUE) %>%
+        select(!No.)
+
+#function to transform data to long
+transform2long<-function(data,trackData,trackInfo,participantID,noOfTracks,noOfQns){
+        #intitalise
+        finalData <- data.frame(
+                ID=numeric(),
+                NoiseType=character(),
+                Masker=character(),
+                SPL=character(),
+                ANC=character(),
+                annoycat=numeric(),
+                 annoyscale=numeric(), 
+                 eventful=numeric(),
+                 vibrant=numeric(),
+                 pleasant=numeric(),
+                 calm=numeric(),
+                 uneventful=numeric(),
+                 monotonous=numeric(),
+                 annoying=numeric(),
+                 chaotic=numeric(),
+                 loudness=numeric(),
+                 desc=character())
+        for (i in 1:noOfTracks){
+                partData<-cbind(participantID,trackInfo[trackData[,i],],
+                                data[(noOfQns*(i-1)+1):(noOfQns*i)]) %>%
+                        `colnames<-`(c("ID","NoiseType","Masker","SPL","ANC",
+                                       "annoycat","annoyscale","eventful",
+                                       "vibrant","pleasant","calm",
+                                       "uneventful","monotonous","annoying",
+                                       "chaotic","loudness","desc"))
+                finalData<-rbind(finalData,partData)
+        }
+        return(finalData)
+}
 
 
-```{r cars}
-summary(cars)
 ```
 
 ## Including Plots
