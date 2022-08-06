@@ -26,6 +26,7 @@ library(readxl)
 #library(kable)
 library(kableExtra)
 library(seewave)
+library(gridExtra)
 
 source("spanrFunc.R")
 ```
@@ -133,9 +134,92 @@ SPL.dBC.df<-merge(SPL.dBC.HATS.df,SPL.dBC.nHATS.df,by=c("time","run","stimuliID"
 #clear mem
 rm(list=c("SPL.dBC.HATS.df","SPL.dBC.nHATS.df","allSPLdBC.DH","allSPLdBC.nDH"))
 
-
 ```
 
+### Dataloading of FFT data (dBA)
+
+```{r}
+
+#list all files in folder
+#filenames with "DH"
+allFFTdBA.DH <- list.files(path = "../Artemis data/Processed Data/FFT dBA",
+                           pattern = "DH", full.names = TRUE)
+#filenames with without "DH"
+allFFTdBA.nDH <- grep(list.files(path = "../Artemis data/Processed Data/FFT dBA",
+                           pattern = ".", full.names = TRUE), 
+                      pattern='DH', invert=TRUE, value=TRUE)
+
+colNames.HATS<-c("freq","mic18","mic17","HATS.L","HATS.R") #with HATS
+colNames.nHATS<-c("freq","mic5","mic13","mic14","mic15") #without HATS
+
+#load separately into dataframe
+FFT.dBA.HATS.df<-fromASC(listOfFiles=allFFTdBA.DH,
+              columnnames = colNames.HATS)
+FFT.dBA.nHATS.df<-fromASC(listOfFiles=allFFTdBA.nDH,
+              columnnames = colNames.nHATS)
+
+#merge dfs for data from 6 microphones + 2 HATS channels
+FFT.dBA.df<-merge(FFT.dBA.HATS.df,FFT.dBA.nHATS.df,by=c("freq","run","stimuliID"))
+
+#clear mem
+rm(list=c("FFT.dBA.HATS.df","FFT.dBA.nHATS.df","allFFTdBA.DH","allFFTdBA.nDH"))
+```
+
+### Dataloading of FFT data (dBC)
+
+```{r}
+
+#list all files in folder
+#filenames with "DH"
+allFFTdBC.DH <- list.files(path = "../Artemis data/Processed Data/FFT dBC",
+                           pattern = "DH", full.names = TRUE)
+#filenames with without "DH"
+allFFTdBC.nDH <- grep(list.files(path = "../Artemis data/Processed Data/FFT dBC",
+                           pattern = ".", full.names = TRUE), 
+                      pattern='DH', invert=TRUE, value=TRUE)
+
+colNames.HATS<-c("freq","mic18","mic17","HATS.L","HATS.R") #with HATS
+colNames.nHATS<-c("freq","mic5","mic13","mic14","mic15") #without HATS
+
+#load separately into dataframe
+FFT.dBC.HATS.df<-fromASC(listOfFiles=allFFTdBC.DH,
+              columnnames = colNames.HATS)
+FFT.dBC.nHATS.df<-fromASC(listOfFiles=allFFTdBC.nDH,
+              columnnames = colNames.nHATS)
+
+#merge dfs for data from 6 microphones + 2 HATS channels
+FFT.dBC.df<-merge(FFT.dBC.HATS.df,FFT.dBC.nHATS.df,by=c("freq","run","stimuliID"))
+
+#clear mem
+rm(list=c("FFT.dBC.HATS.df","FFT.dBC.nHATS.df","allFFTdBC.DH","allFFTdBC.nDH"))
+```
+
+### Dataloading of single value table
+
+```{r, message=FALSE}
+
+#load computed single values
+data.sv<-read_excel("./acousticParams_ANCSubj.xlsx",skip = 1) %>%
+  `colnames<-`(sv.colnames)
+
+#clean data to wide format
+data.sv<-data.sv %>%  
+        dplyr::select(c("Filename","Channel",params.udrTest)) %>% #select relevant
+        mutate(Channel=ifelse(grepl('DH',Channel), #if contains "DH"
+                              #extract "L" or "R"
+                              gsub("[-]","",str_extract(string = Channel,
+                                                     pattern = "-[A-Z]$")),
+                              #else extract mic number
+                              paste0("mic", gsub("[_]","",
+                                   str_extract(string = Channel,
+                                                     pattern = "_[0-9]+$"))))) %>%
+        mutate(stimuliID=as.numeric(gsub("[_(]","", #get stimuli ID
+                                              str_extract(string = Filename, 
+                                                          pattern = "_[0-9]+\\(")))) %>%
+        dplyr::select(!Filename) %>% #remove filenames 
+        #add labels for grouping EA mics and HATS mics
+        mutate(measurement=ifelse(grepl("L|R",Channel),"HATS","EA"))
+```
 
 ## Data exploration and summary statistics
 
@@ -333,7 +417,7 @@ mean65dB <- dataRel %>%
 
 ```{r obj.dBA, message=FALSE}
 
-#box plots of SPL
+#scatter plots of SPL
 
 #summarise data for dBA plot
 summary.SPL.df <- SPL.dBA.df %>%
@@ -368,6 +452,209 @@ ggplot(summary.SPL.df, aes(x = stimuliID, y = dBA, group=stimuliID, color=Measur
 
 
 ```
+### Single value objective indicators
+
+```{r}
+
+#stimuli names for plotting
+stimuli.trackInfo.names <- trackInfo[2:nrow(trackInfo),] %>%
+        mutate(NoiseType=ifelse(NoiseType=="Train","MRT",
+                                ifelse(NoiseType=="Aircraft","AIR",
+                                       ifelse(NoiseType=="Traffic","TRA",NoiseType))),
+               Masker=ifelse(Masker=="Bird","B",
+                             ifelse(Masker=="Water","W",Masker))) %>%
+        mutate(stimuliID=row_number()) %>%
+        mutate(stimuli.name=case_when(Masker=="None" & ANC == "No" ~ 
+                                              paste0(NoiseType,"@",SPL),
+                                      Masker=="None" & ANC == "Yes" ~ 
+                                              paste0(NoiseType,"*","@",SPL),
+                                      Masker!="None" & ANC == "No" ~ 
+                                              paste0(NoiseType,"@",SPL,"+",Masker),
+                                      Masker!="None" & ANC == "Yes" ~ 
+                                              paste0(NoiseType,"*","@",SPL,"+",Masker)))
+
+mean.SV <- data.sv %>%
+        dplyr::select(!Channel) %>%
+        dplyr::filter(!stimuliID==0) %>% #remove noise floor
+        group_by(stimuliID,measurement) %>%
+        dplyr::summarise(across(everything(),list(mean))) %>%
+        ungroup %>%
+        `colnames<-`(gsub("_1","",colnames(.))) %>%
+        pivot_longer(cols = !c("stimuliID","measurement"), 
+                     names_to = "Indicator",values_to = "Value") %>%
+        pivot_wider(names_from = stimuliID,values_from = Value) %>%
+        `colnames<-`(cbind(c("measurement","indicator",stimuli.trackInfo.names$stimuli.name)))
+
+```
+### SV Attenuation
+
+```{r}
+
+mean.SV.att <- mean.SV %>%
+        filter(grepl("(C)|(A)", indicator)) %>%
+        #compute attenuation
+        mutate(`AIR@65dB`=`AIR@65dB`-`AIR*@65dB`,`MRT@65dB`=`MRT@65dB`-`MRT*@65dB`,
+               `TRA@65dB`=`TRA@65dB`-`TRA*@65dB`,`AIR@70dB`=`AIR@70dB`-`AIR*@70dB`,
+               `MRT@70dB`=`MRT@70dB`-`MRT*@70dB`,`TRA@70dB`=`TRA@70dB`-`TRA*@70dB`,
+               `AIR@65dB+B`=`AIR@65dB+B`-`AIR*@65dB+B`,
+               `MRT@65dB+B`=`MRT@65dB+B`-`MRT*@65dB+B`,
+               `TRA@65dB+B`=`TRA@65dB+B`-`TRA*@65dB+B`,
+               `AIR@65dB+W`=`AIR@65dB+W`-`AIR*@65dB+W`,
+               `MRT@65dB+W`=`MRT@65dB+W`-`MRT*@65dB+W`,
+               `TRA@65dB+W`=`TRA@65dB+W`-`TRA*@65dB+W`) %>%
+        dplyr::select(!matches("\\*|60")) %>%
+        mutate(weight=ifelse(grepl("(C)",indicator),"C","A")) %>%
+        group_by(measurement,weight) %>%
+        dplyr::summarise_all(list(mean=mean,sd=sd))
+        
+        
+
+```
 
 
+### FFT (dBA)
+
+```{r FFT, message=FALSE}
+
+#color
+set1clr<-brewer.pal(n = 9,"Set1")
+
+#mean across runs and EA/HATS channels
+summary.FFT.dBA.df <- FFT.dBA.df %>%
+        #mean across runs
+        group_by(freq,stimuliID) %>%
+        dplyr::summarise(across(-c(run),list(meandB))) %>%
+        ungroup() %>%
+        `colnames<-`(gsub("_1","",colnames(.))) %>% #remove "_1"
+        rowwise() %>% #mean across EA/HATS mics
+        mutate(EA=meandB(c(mic5,mic13,mic14,mic15,mic17,mic18)),
+               HATS=meandB(c(HATS.L,HATS.R))) %>%
+        dplyr::select(!c(mic5,mic13,mic14,mic15,mic17,mic18,HATS.L,HATS.R)) %>%
+        filter(!stimuliID==0) %>%
+        ungroup() %>%
+        left_join(.,stimuli.trackInfo.names,by="stimuliID") %>%
+        pivot_longer(cols = c(EA,HATS),names_to = "measurement",values_to = "dBA")
+        
+g.65dB<-ggplot(data = summary.FFT.df %>% 
+               mutate(stimuliID=as.factor(stimuliID)) %>%
+               filter(SPL=="65dB"), 
+       aes(x = freq,y = dBA,color=Masker)) +
+        facet_grid(NoiseType~measurement) +
+        geom_line(aes(linetype=ANC))+
+        scale_x_log10(limits=c(100,10000)) +
+        annotation_logticks(sides="b") + 
+        scale_color_manual(values = set1clr) +
+        ylim(20,50) + xlab("Frequency, Hz") + 
+        scale_color_manual(values = set1clr) +
+        ylab ("Sound Pressure Level, dB(A)") + theme(legend.position="bottom")
+g.65dB
+
+ggsave("65dBA_HATS.pdf",plot = g.65dB, width = 1800, height = 1500, units = "px",scale = 1)
+
+#70 dBA only HATS
+g.70dBA<-ggplot(data = summary.FFT.dBA.df %>% 
+               mutate(stimuliID=as.factor(stimuliID)) %>%
+               filter(SPL=="70dB" & measurement=="HATS"), 
+       aes(x = freq,y = dBA,color=NoiseType)) +
+        facet_wrap(~NoiseType,nrow = 3) +
+        geom_line(aes(linetype=ANC))+
+        ylim(24,55) + xlab("Frequency, Hz") + 
+        scale_color_manual(values = set1clr) +
+        ylab ("Sound Pressure Level, dB(A)") +
+        scale_x_log10(limits=c(100,10000)) +
+        annotation_logticks(sides="b") +
+        theme(legend.position="none",panel.grid.minor = element_blank())
+g.70dBA
+ggsave("70dBA_HATS.pdf",plot = g.70dBA, width = 900, height = 1500, units = "px",scale = 1)
+```
+
+### FFT (dBC)
+
+```{r FFT, message=FALSE}
+
+#color
+set1clr<-brewer.pal(n = 9,"Set1")
+
+#mean across runs and EA/HATS channels
+summary.FFT.dBC.df <- FFT.dBC.df %>%
+        #mean across runs
+        group_by(freq,stimuliID) %>%
+        dplyr::summarise(across(-c(run),list(meandB))) %>%
+        ungroup() %>%
+        `colnames<-`(gsub("_1","",colnames(.))) %>% #remove "_1"
+        rowwise() %>% #mean across EA/HATS mics
+        mutate(EA=meandB(c(mic5,mic13,mic14,mic15,mic17,mic18)),
+               HATS=meandB(c(HATS.L,HATS.R))) %>%
+        dplyr::select(!c(mic5,mic13,mic14,mic15,mic17,mic18,HATS.L,HATS.R)) %>%
+        filter(!stimuliID==0) %>%
+        ungroup() %>%
+        left_join(.,stimuli.trackInfo.names,by="stimuliID") %>%
+        pivot_longer(cols = c(EA,HATS),names_to = "measurement",values_to = "dBC")
+        
+g.65dBC<-ggplot(data = summary.FFT.dBC.df %>% 
+               mutate(stimuliID=as.factor(stimuliID)) %>%
+               filter(SPL=="65dB"), 
+       aes(x = freq,y = dBC,color=Masker)) +
+        facet_grid(NoiseType~measurement) +
+        geom_line(aes(linetype=ANC))+
+        scale_x_log10(limits=c(100,10000)) +
+        annotation_logticks(sides="b") + 
+        scale_color_manual(values = set1clr) +
+        ylim(20,50) + xlab("Frequency, Hz") + 
+        scale_color_manual(values = set1clr) +
+        ylab ("Sound Pressure Level, dB(C)") + theme(legend.position="bottom")
+g.65dBC
+
+ggsave("65dBC_HATS.pdf",plot = g.65dBC, width = 1800, height = 1500, units = "px",scale = 1)
+
+#70 dBA only HATS
+g.70dBC<-ggplot(data = summary.FFT.dBC.df %>% 
+               mutate(stimuliID=as.factor(stimuliID)) %>%
+               filter(SPL=="70dB" & measurement=="HATS"), 
+       aes(x = freq,y = dBC,color=NoiseType)) +
+        facet_wrap(~NoiseType,nrow = 3) +
+        geom_line(aes(linetype=ANC))+
+        ylim(24,55) + xlab("Frequency, Hz") + 
+        scale_color_manual(values = set1clr) +
+        ylab ("Sound Pressure Level, dB(C)") +
+        scale_x_log10(limits=c(100,10000)) +
+        annotation_logticks(sides="b") +
+        theme(legend.position="none",panel.grid.minor = element_blank())
+g.70dBC
+ggsave("70dBC_HATS.pdf",plot = g.70dBC, width = 900, height = 1500, units = "px",scale = 1)
+
+#create combined plot of 70dBA and 70dBC
+
+#70 dBA only HATS
+g.70dBC_legend<-ggplot(data = summary.FFT.dBC.df %>% 
+               mutate(stimuliID=as.factor(stimuliID)) %>%
+               filter(SPL=="70dB" & measurement=="HATS"), 
+       aes(x = freq,y = dBC,color=NoiseType)) +
+        facet_wrap(~NoiseType,nrow = 3) +
+        geom_line(aes(linetype=ANC))+
+        ylim(24,55) + xlab("Frequency, Hz") + 
+        scale_color_manual(values = set1clr) +
+        ylab ("Sound Pressure Level, dB(C)") +
+        scale_x_log10(limits=c(100,10000)) +
+        annotation_logticks(sides="b") +
+        theme(legend.position="bottom",panel.grid.minor = element_blank())
+
+# Create user-defined function, which extracts legends from ggplots
+extract_legend <- function(my_ggp) {
+  step1 <- ggplot_gtable(ggplot_build(my_ggp))
+  step2 <- which(sapply(step1$grobs, function(x) x$name) == "guide-box")
+  step3 <- step1$grobs[[step2]]
+  return(step3)
+}
+
+# Apply user-defined function to extract legend
+shared_legend <- extract_legend(g.70dBC_legend)
+
+# combine plots with shared legend
+g.comb.70dB<-grid.arrange(arrangeGrob(g.70dBA, g.70dBC, ncol = 2),
+             shared_legend, nrow = 2, heights = c(20, 1))
+
+ggsave("70dB_HATS_comb.pdf",plot = g.comb.70dB, width = 1800, height = 1500, units = "px",scale = 1)
+
+```
 
