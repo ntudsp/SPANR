@@ -110,3 +110,60 @@ params.udrTest<-
           "Max(R)","R","R5","R10","R50","R90","R95",
           "Max(Tone)","Tone5","Tone10","Tone50","Tone90","Tone95",
           "Max(Fluc)","Fluc5","Fluc10","Fluc50","Fluc90","Fluc95")
+
+#function for BA plots
+
+baplotOpts<-function(data,X,Y,color, #ggplot aes
+                     fg.XY, #facet grid formula
+                     np,#no. of params
+                     #hline for mean diff, upper LoA, lower LoA
+                     hl.mean, hl.upper, hl.lower, 
+                     #lower/upper 95% limits of lwr/upr LoA & mean
+                     lwr.ymin,lwr.ymax,upr.ymin,upr.ymax,m.ymin,m.ymax,
+                     geom.text.size,theme.size,geom.point.size,colorl,
+                     xlim.low,xlim.upp,ylim.low,ylim.upp,ylabel,xlabel){
+        ggplot(data = data,
+               aes(x={{X}},y={{Y}},color={{color}})) +
+                facet_grid({{fg.XY}}) +
+                geom_point(size=geom.point.size,alpha=0.5) + #add differences
+                #average difference line (mean)
+                geom_hline(aes(yintercept = {{hl.mean}}), color=colorl[5]) +
+                geom_text(aes(xlim.upp,{{hl.mean}},
+                              label = paste("M =",as.character(round({{hl.mean}},2))), 
+                              vjust = -0.5,hjust="right"), 
+                          color=colorl[5],size=geom.text.size, 
+                          check_overlap = T) +
+                #95% cf. int. mean
+                geom_rect(data = data[np,], #prevent drawing rect every repeated row
+                          aes(xmin = -Inf, xmax = Inf, 
+                              ymin = {{m.ymin}}, ymax = {{m.ymax}}),
+                          fill = colorl[5], alpha = 0.2,color = NA) +
+                #lower bound line
+                geom_hline(aes(yintercept = {{hl.lower}}), 
+                           color = colorl[4], linetype="dashed") +
+                geom_text(aes(xlim.upp,{{hl.lower}},
+                              label = paste("M - 1.96SD:",as.character(round({{hl.lower}},2))), 
+                              vjust = 2.5,hjust="right"), 
+                          color=colorl[4],size=geom.text.size,
+                          check_overlap = T, parse = F) +
+                geom_rect(data = data[np,],aes(xmin = -Inf, xmax = Inf, 
+                                                     ymin = {{lwr.ymin}}, ymax = {{lwr.ymax}}),
+                          fill = colorl[4], alpha = 0.2,color = NA) +
+                #upper bound line
+                geom_hline(aes(yintercept = {{hl.upper}}), 
+                           color = colorl[4], linetype="dashed")  +
+                geom_text(aes(xlim.upp,{{hl.upper}},
+                              label = paste("M + 1.96SD:",as.character(round({{hl.upper}},2))), 
+                              vjust = -1.5 ,hjust="right"), size=geom.text.size,
+                          color=colorl[4],check_overlap = T, parse = F) +
+                geom_rect(data = data[np,],aes(xmin = -Inf, xmax = Inf, 
+                                                     ymin = {{upr.ymin}}, ymax = {{upr.ymax}}),
+                          fill = colorl[4], alpha = 0.2,color = NA) +
+                xlim(xlim.low, xlim.upp) + ylim(ylim.low, ylim.upp) +
+                scale_color_brewer(palette = "Set1",) +
+                ylab(label = ylabel) + xlab(label = xlabel) +
+                theme(text = element_text(size=theme.size),legend.position="none",
+                      axis.text.x = element_text(angle = 30, 
+                                                 vjust = 0.75, hjust=0.5))
+}
+
