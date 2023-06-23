@@ -1,5 +1,5 @@
 ---
-title: "Untitled"
+title: "Replication code for: Anti-noise window: subjective perception of active noise reduction and effect of informational masking"
 output: github_document
 ---
 
@@ -30,6 +30,17 @@ library(gridExtra)
 
 source("spanrFunc.R")
 ```
+
+## Data loading
+
+Load researcg data from data repository
+
+```{r dataload}
+
+
+
+```
+
 
 ## Data Preparation
 
@@ -514,7 +525,7 @@ mean.SV.att <- mean.SV %>%
 
 ### FFT (dBA)
 
-```{r FFT, message=FALSE}
+```{r FFTdBA, message=FALSE}
 
 #color
 set1clr<-brewer.pal(n = 9,"Set1")
