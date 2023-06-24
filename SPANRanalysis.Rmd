@@ -5,7 +5,7 @@ output: github_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-
+library(dataverse)
 library(raster)
 library(lubridate)
 library(rjson)
@@ -36,7 +36,37 @@ source("spanrFunc.R")
 Load researcg data from data repository
 
 ```{r dataload}
+#Set dataverse server
+Sys.setenv("DATAVERSE_SERVER" = "https://researchdata.ntu.edu.sg")
 
+#Retrieve research data from dataverse dataset
+#subjective listening test data
+data.subj <- get_dataframe_by_name( filename = "SPANR_subj_clean.tab", 
+  dataset = "10.21979/N9/SEGEFM", original = TRUE, .f = read.csv)
+
+#demographic data
+data.demo <- get_dataframe_by_name( filename = "SPANR_demo_clean.tab", 
+  dataset = "10.21979/N9/SEGEFM", original = TRUE, .f = read.csv)
+
+#objective SPL dBA vs time
+data.spla <- get_dataframe_by_name( filename = "SPANR_SPLdBA_clean.tab", 
+  dataset = "10.21979/N9/SEGEFM", original = TRUE, .f = read.csv)
+
+#objective SPL dBC vs time
+data.splc <- get_dataframe_by_name( filename = "SPANR_SPLdBC_clean.tab", 
+  dataset = "10.21979/N9/SEGEFM", original = TRUE, .f = read.csv)
+
+#objective FFT dBA vs time
+data.ffta <- get_dataframe_by_name( filename = "SPANR_FFTdBA_clean.tab", 
+  dataset = "10.21979/N9/SEGEFM", original = TRUE, .f = read.csv)
+
+#objective FFT dBC vs time
+data.fftc <- get_dataframe_by_name( filename = "SPANR_FFTdBC_clean.tab", 
+  dataset = "10.21979/N9/SEGEFM", original = TRUE, .f = read.csv)
+
+#objective single value acoustic parameter data
+data.sv <- get_dataframe_by_name( filename = "SPANR_sv_clean.tab", 
+  dataset = "10.21979/N9/SEGEFM", original = TRUE, .f = read.csv)
 
 
 ```
