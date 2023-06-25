@@ -33,234 +33,46 @@ source("spanrFunc.R")
 
 ## Data loading
 
-Load researcg data from data repository
+Load research data from data repository
 
 ```{r dataload}
 #Set dataverse server
 Sys.setenv("DATAVERSE_SERVER" = "https://researchdata.ntu.edu.sg")
 
 #Retrieve research data from dataverse dataset
-#subjective listening test data
-data.subj <- get_dataframe_by_name( filename = "SPANR_subj_clean.tab", 
-  dataset = "10.21979/N9/SEGEFM", original = TRUE, .f = read.csv)
+dv.dataset = "10.21979/N9/SEGEFM" #dataset linked to this paper
+#define a list of data frame names and associated dataset file names
+data.names <- data.frame(
+        df.name=c(
+                "data.subj","data.demo","data.spla","data.splc",
+                "data.ffta","data.fftc","data.sv"),
+        filename=c("SPANR_subj_clean.tab","SPANR_demo_clean.tab",
+                   "SPANR_SPLdBA_clean.tab","SPANR_SPLdBC_clean.tab",
+                   "SPANR_FFTdBA_clean.tab","SPANR_FFTdBC_clean.tab",
+                   "SPANR_sv_clean.tab"))
 
-#demographic data
-data.demo <- get_dataframe_by_name( filename = "SPANR_demo_clean.tab", 
-  dataset = "10.21979/N9/SEGEFM", original = TRUE, .f = read.csv)
+# Empty list to store the data frames
+data.l <- list()
 
-#objective SPL dBA vs time
-data.spla <- get_dataframe_by_name( filename = "SPANR_SPLdBA_clean.tab", 
-  dataset = "10.21979/N9/SEGEFM", original = TRUE, .f = read.csv)
-
-#objective SPL dBC vs time
-data.splc <- get_dataframe_by_name( filename = "SPANR_SPLdBC_clean.tab", 
-  dataset = "10.21979/N9/SEGEFM", original = TRUE, .f = read.csv)
-
-#objective FFT dBA vs time
-data.ffta <- get_dataframe_by_name( filename = "SPANR_FFTdBA_clean.tab", 
-  dataset = "10.21979/N9/SEGEFM", original = TRUE, .f = read.csv)
-
-#objective FFT dBC vs time
-data.fftc <- get_dataframe_by_name( filename = "SPANR_FFTdBC_clean.tab", 
-  dataset = "10.21979/N9/SEGEFM", original = TRUE, .f = read.csv)
-
-#objective single value acoustic parameter data
-data.sv <- get_dataframe_by_name( filename = "SPANR_sv_clean.tab", 
-  dataset = "10.21979/N9/SEGEFM", original = TRUE, .f = read.csv)
-
-
-```
+for (name in data.names$df.name) {
+        #get dataset from dataverse
+        df<-get_dataframe_by_name(filename = data.names[data.names$df.name==name,
+                                            "filename"],
+                      dataset = dv.dataset, orginal = TRUE,
+                      .f = function(x) read.table(x, header = TRUE, 
+                                                  sep = "\t", fill = TRUE))
+        
+        #assign the data frame to pre-defined name
+        assign(name, df)
+        
+        #add data frame to list
+        data.l[[name]] <- df
+}
 
 
-## Data Preparation
-
-Subject data was logged in JSON format via the NI WebVI platform. 
-
-```{r dataClean, message=FALSE}
-
-#Demographic
-allDemo <- read_excel("../SPANRdemograph.xlsx") %>%
-        mutate_at(c("Gender","Race/Ethinicity","Nationality",
-                    "Age band"),as.factor) %>%
-        select(c("ID","Gender","Race/Ethinicity","Nationality",
-                    "Age band"))
-
-#List of all files
-allDataJSON <- list.files(path = "../JSON file/",
-                        pattern = "*Data.json", full.names = TRUE) 
-
-#extract participant ID
-participantID <- as.numeric(gsub(".*?([0-9]+).*", 
-                                 "\\1", allDataJSON))
-
-allTrackSeqJSON <- list.files(path = "../JSON file/",
-                        pattern = "*List.json", full.names = TRUE)
-
-#extract response to questions from JSON
-spanrData <- ldply(allDataJSON,function(x) t(unlist(fromJSON(file = x))))
-trackseqData <- ldply(allTrackSeqJSON,function(x) t(unlist(fromJSON(file = x))))
-
-#load track type
-trackInfo <- read.csv(file = "../Soundtrack_Information.csv",header = TRUE) %>%
-        select(!No.)
-
-columnnames<-c("ID","NoiseType","Masker","SPL","ANC",
-                                       "annoycat","annoyscale","eventful",
-                                       "vibrant","pleasant","calm",
-                                       "uneventful","monotonous","annoying",
-                                       "chaotic","loudness","desc")
-
-#merge data, participant ID, stimuli info
-#26 tracks and 12 questions in total
-data<-transform2long(spanrData,trackseqData,trackInfo,
-                     participantID,columnnames,26,12) %>%
-        mutate(annoycat=factor(annoycat,levels = c("Not At All","Slightly","Moderately","Very","Extremely"))) %>%
-        mutate_at(c('annoyscale','eventful','vibrant','pleasant','calm',
-                    'uneventful','monotonous','annoying','chaotic','loudness'),as.numeric) %>%
-        mutate_at(c('NoiseType','Masker','ANC','SPL'),as.factor)
-
-#ID with missing data
-sort(unique(data$ID[!complete.cases(data)]))
-
-#correct mistake in data
-data$loudness[which(data$loudness==1000)] <- 100
 
 ```
 
-### Preparation of objective data
-
-Each stimuli was measured with a HATS and 6 microphones distributed in the chamber.
-
-```{r objData, message=FALSE}
-
-#list all files in folder
-allSPLdBA.DH <- list.files(path = "../Artemis data/Processed Data/SPL dBA",
-                           pattern = "DH", full.names = TRUE)
-
-allSPLdBA.nDH <- grep(list.files(path = "../Artemis data/Processed Data/SPL dBA",
-                           pattern = ".", full.names = TRUE), 
-                      pattern='DH', invert=TRUE, value=TRUE)
-
-allSPLdBC.DH <- list.files(path = "../Artemis data/Processed Data/SPL dBC",
-                           pattern = "DH", full.names = TRUE)
-
-allSPLdBC.nDH <- grep(list.files(path = "../Artemis data/Processed Data/SPL dBC",
-                           pattern = ".", full.names = TRUE), 
-                      pattern='DH', invert=TRUE, value=TRUE)
-
-colNames.HATS<-c("time","mic18","mic17","HATS.L","HATS.R") #with HATS
-colNames.nHATS<-c("time","mic5","mic13","mic14","mic15") #without HATS
-
-#dBA
-SPL.dBA.HATS.df<-fromASC(listOfFiles=allSPLdBA.DH,
-              columnnames = c("time","mic18","mic17","HATS.L","HATS.R"))
-SPL.dBA.nHATS.df<-fromASC(listOfFiles=allSPLdBA.nDH,
-              columnnames = c("time","mic5","mic13","mic14","mic15"))
-
-#merge dfs for data from 6 microphones + 2 HATS channels
-SPL.dBA.df<-merge(SPL.dBA.HATS.df,SPL.dBA.nHATS.df,by=c("time","run","stimuliID"))
-
-#clear mem
-rm(list=c("SPL.dBA.HATS.df","SPL.dBA.nHATS.df","allSPLdBA.DH","allSPLdBA.nDH"))
-
-#dBC
-SPL.dBC.HATS.df<-fromASC(listOfFiles=allSPLdBC.DH,
-              columnnames = c("time","mic18","mic17","HATS.L","HATS.R"))
-SPL.dBC.nHATS.df<-fromASC(listOfFiles=allSPLdBC.nDH,
-              columnnames = c("time","mic5","mic13","mic14","mic15"))
-
-#merge dfs for data from 6 microphones + 2 HATS channels
-SPL.dBC.df<-merge(SPL.dBC.HATS.df,SPL.dBC.nHATS.df,by=c("time","run","stimuliID"))
-
-#clear mem
-rm(list=c("SPL.dBC.HATS.df","SPL.dBC.nHATS.df","allSPLdBC.DH","allSPLdBC.nDH"))
-
-```
-
-### Dataloading of FFT data (dBA)
-
-```{r}
-
-#list all files in folder
-#filenames with "DH"
-allFFTdBA.DH <- list.files(path = "../Artemis data/Processed Data/FFT dBA",
-                           pattern = "DH", full.names = TRUE)
-#filenames with without "DH"
-allFFTdBA.nDH <- grep(list.files(path = "../Artemis data/Processed Data/FFT dBA",
-                           pattern = ".", full.names = TRUE), 
-                      pattern='DH', invert=TRUE, value=TRUE)
-
-colNames.HATS<-c("freq","mic18","mic17","HATS.L","HATS.R") #with HATS
-colNames.nHATS<-c("freq","mic5","mic13","mic14","mic15") #without HATS
-
-#load separately into dataframe
-FFT.dBA.HATS.df<-fromASC(listOfFiles=allFFTdBA.DH,
-              columnnames = colNames.HATS)
-FFT.dBA.nHATS.df<-fromASC(listOfFiles=allFFTdBA.nDH,
-              columnnames = colNames.nHATS)
-
-#merge dfs for data from 6 microphones + 2 HATS channels
-FFT.dBA.df<-merge(FFT.dBA.HATS.df,FFT.dBA.nHATS.df,by=c("freq","run","stimuliID"))
-
-#clear mem
-rm(list=c("FFT.dBA.HATS.df","FFT.dBA.nHATS.df","allFFTdBA.DH","allFFTdBA.nDH"))
-```
-
-### Dataloading of FFT data (dBC)
-
-```{r}
-
-#list all files in folder
-#filenames with "DH"
-allFFTdBC.DH <- list.files(path = "../Artemis data/Processed Data/FFT dBC",
-                           pattern = "DH", full.names = TRUE)
-#filenames with without "DH"
-allFFTdBC.nDH <- grep(list.files(path = "../Artemis data/Processed Data/FFT dBC",
-                           pattern = ".", full.names = TRUE), 
-                      pattern='DH', invert=TRUE, value=TRUE)
-
-colNames.HATS<-c("freq","mic18","mic17","HATS.L","HATS.R") #with HATS
-colNames.nHATS<-c("freq","mic5","mic13","mic14","mic15") #without HATS
-
-#load separately into dataframe
-FFT.dBC.HATS.df<-fromASC(listOfFiles=allFFTdBC.DH,
-              columnnames = colNames.HATS)
-FFT.dBC.nHATS.df<-fromASC(listOfFiles=allFFTdBC.nDH,
-              columnnames = colNames.nHATS)
-
-#merge dfs for data from 6 microphones + 2 HATS channels
-FFT.dBC.df<-merge(FFT.dBC.HATS.df,FFT.dBC.nHATS.df,by=c("freq","run","stimuliID"))
-
-#clear mem
-rm(list=c("FFT.dBC.HATS.df","FFT.dBC.nHATS.df","allFFTdBC.DH","allFFTdBC.nDH"))
-```
-
-### Dataloading of single value table
-
-```{r, message=FALSE}
-
-#load computed single values
-data.sv<-read_excel("./acousticParams_ANCSubj.xlsx",skip = 1) %>%
-  `colnames<-`(sv.colnames)
-
-#clean data to wide format
-data.sv<-data.sv %>%  
-        dplyr::select(c("Filename","Channel",params.udrTest)) %>% #select relevant
-        mutate(Channel=ifelse(grepl('DH',Channel), #if contains "DH"
-                              #extract "L" or "R"
-                              gsub("[-]","",str_extract(string = Channel,
-                                                     pattern = "-[A-Z]$")),
-                              #else extract mic number
-                              paste0("mic", gsub("[_]","",
-                                   str_extract(string = Channel,
-                                                     pattern = "_[0-9]+$"))))) %>%
-        mutate(stimuliID=as.numeric(gsub("[_(]","", #get stimuli ID
-                                              str_extract(string = Filename, 
-                                                          pattern = "_[0-9]+\\(")))) %>%
-        dplyr::select(!Filename) %>% #remove filenames 
-        #add labels for grouping EA mics and HATS mics
-        mutate(measurement=ifelse(grepl("L|R",Channel),"HATS","EA"))
-```
 
 ## Data exploration and summary statistics
 
