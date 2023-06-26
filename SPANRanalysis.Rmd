@@ -20,33 +20,32 @@ require(lsr)
 require(MVN)
 require(rstatix)
 
-#formatting
+#formatting and graphics
 require(kableExtra)
+library(gridExtra)
+library(RColorBrewer)
+library(pals)
+library(ggExtra)
 
 #acoustic package
 require(seewave)
 
 library(raster)
-library(lubridate)
+
 library(rjson)
-library(plyr)
-library(dplyr)
-library(tidyr)
-library(ggplot2)
-library(RColorBrewer)
+
+
 library(stringr)
 library(ggrepel)
 library(scales)
 library(reshape2)
-library(psych)
+
 library(psychTools)
-library(RTHORR)
-library(lsr)
-library(readxl)
-#library(kable)
-library(kableExtra)
-library(seewave)
-library(gridExtra)
+
+
+
+
+
 
 source("spanrFunc.R")
 ```
@@ -141,6 +140,319 @@ data.subj.rel <- data.l[["data.subj"]] %>%
 data.demo.rel <- data.l[["data.demo"]] %>% 
         dplyr::filter(!ID %in% IDunRel) %>% 
         dplyr::filter(!ID==1)
+
+```
+
+## Single value objective indicators
+
+```{r}
+
+#stimuli names for plotting
+stimuli.trackInfo.names <- trackInfo[2:nrow(trackInfo),] %>%
+        dplyr::select(!c("No.")) %>%
+        dplyr::mutate(NoiseType=ifelse(NoiseType=="Train","MRT",
+                                ifelse(NoiseType=="Aircraft","AIR",
+                                       ifelse(NoiseType=="Traffic","TRA",NoiseType))),
+               Masker=ifelse(Masker=="Bird","B",
+                             ifelse(Masker=="Water","W",Masker))) %>%
+        dplyr::mutate(stimuliID=row_number()) %>%
+        dplyr::mutate(stimuli.name.short=case_when(
+                Masker=="None" & ANC == "No" ~ paste0(NoiseType,"@",SPL),
+                Masker=="None" & ANC == "Yes" ~ paste0(NoiseType,"*@",SPL),
+                Masker!="None" & ANC == "No" ~ paste0(NoiseType,"@",SPL,
+                                                      "+",Masker),
+                Masker!="None" & ANC == "Yes" ~ paste0(NoiseType,"*@",SPL,
+                                                       "+",Masker))) %>%
+        dplyr::mutate(stimuli.name=case_when(
+                Masker=="None" & ANC == "No" ~ paste0(NoiseType,"['",
+                                                      SPL,"(A)']"),
+                Masker=="None" & ANC == "Yes" ~ paste0(NoiseType,"['",
+                                                       SPL, "(A)']^'*'"),
+                Masker!="None" & ANC == "No" ~ paste0(NoiseType,"['",
+                                                      SPL,"(A)']+",Masker),
+                Masker!="None" & ANC == "Yes" ~ paste0(NoiseType,"['",SPL,
+                                                     "(A)']^'*'+",Masker)))
+
+mean.SV <- data.l[["data.sv"]] %>%
+        dplyr::select(!Channel) %>%
+        dplyr::filter(!stimuliID==0) %>% #remove noise floor
+        group_by(stimuliID,measurement) %>%
+        dplyr::summarise(across(everything(),list(mean))) %>%
+        ungroup %>%
+        `colnames<-`(gsub("_1","",colnames(.))) %>%
+        `colnames<-`(gsub("\\.$",")",colnames(.))) %>%
+        `colnames<-`(gsub("\\.","(",colnames(.))) %>%
+        pivot_longer(cols = !c("stimuliID","measurement"), 
+                     names_to = "Indicator",values_to = "Value") %>%
+        #add stimuli details by merging
+        left_join(.,stimuli.trackInfo.names, by="stimuliID") %>%
+        dplyr::select(!c("NoiseType","Masker","ANC","SPL",
+                         "stimuliID","stimuli.name.short")) %>%
+        pivot_wider(names_from = stimuli.name, values_from = Value) %>%
+        `colnames<-`(cbind(c("measurement","indicator",
+                             stimuli.trackInfo.names$stimuli.name.short)))
+
+```
+### dB Attenuation
+
+```{r}
+#compute difference before and after intervention only for dBA and dBC
+mean.SV.att <- mean.SV %>%
+        dplyr::filter(grepl("(C)|(A)", indicator)) %>%
+        #compute attenuation
+        dplyr::mutate(`AIR@65dB`=`AIR@65dB`-`AIR*@65dB`,
+                      `MRT@65dB`=`MRT@65dB`-`MRT*@65dB`,
+                      `TRA@65dB`=`TRA@65dB`-`TRA*@65dB`,
+                      `AIR@70dB`=`AIR@70dB`-`AIR*@70dB`,
+                      `MRT@70dB`=`MRT@70dB`-`MRT*@70dB`,
+                      `TRA@70dB`=`TRA@70dB`-`TRA*@70dB`,
+                      `AIR@65dB+B`=`AIR@65dB+B`-`AIR*@65dB+B`,
+                      `MRT@65dB+B`=`MRT@65dB+B`-`MRT*@65dB+B`,
+                      `TRA@65dB+B`=`TRA@65dB+B`-`TRA*@65dB+B`,
+                      `AIR@65dB+W`=`AIR@65dB+W`-`AIR*@65dB+W`,
+                      `MRT@65dB+W`=`MRT@65dB+W`-`MRT*@65dB+W`,
+                      `TRA@65dB+W`=`TRA@65dB+W`-`TRA*@65dB+W`) %>%
+        dplyr::select(!matches("\\*|60")) %>%
+        dplyr::mutate(weight=ifelse(grepl("(C)",indicator),"C","A")) %>%
+        group_by(measurement,weight) %>%
+        dplyr::summarise_all(list(mean=mean,sd=sd))
+
+#generate table of attenuation scores
+table.sv.att<- mean.SV %>%
+        `colnames<-`(cbind(c("measurement","indicator",
+                             stimuli.trackInfo.names$stimuli.name))) %>%
+        pivot_longer(names_to = "stimuli.name",values_to = "value",
+                     cols = -c(1,2)) %>%
+        pivot_wider(names_from = indicator, values_from = value) %>%
+        dplyr::mutate(
+                PA=ifelse(S>1.75,
+                          N5*(1+sqrt(((S-1.75)*0.25*log10(N5+10))^2+
+                                             ((2.18/N5^0.4)*(0.4*Fluc95+0.6*R))^2)),
+                         N5*(1+sqrt(((2.18/N5^0.4)*(0.4*Fluc95+0.6*R))^2))),
+               `L10(A)-L90(A)`=`L10(A)`-`L90(A)`,
+               `L(C)-L(A)`=`L10(C)`-`L(A)`) %>%
+        #dplyr::select(!c(1,3:6)) %>%
+        pivot_longer(cols = !c(1,2),
+                     names_to = "Parameters", values_to = "Value") %>%
+        pivot_wider(names_from = c("measurement","stimuli.name"),
+                    values_from = Value) %>%
+        dplyr::mutate(HATS_AIR65dBA.B0=`HATS_AIR['65dB(A)']`-`HATS_AIR['65dB(A)']+B`,
+               HATS_AIR65dBA.W0=`HATS_AIR['65dB(A)']`-`HATS_AIR['65dB(A)']+W`,
+               HATS_AIR65dBA=`HATS_AIR['65dB(A)']`-`HATS_AIR['65dB(A)']^'*'`,
+               HATS_AIR65dBA.B=`HATS_AIR['65dB(A)']`-`HATS_AIR['65dB(A)']^'*'+B`,
+               HATS_AIR65dBA.W=`HATS_AIR['65dB(A)']`-`HATS_AIR['65dB(A)']^'*'+W`,
+               HATS_AIR70dBA=`HATS_AIR['70dB(A)']`-`HATS_AIR['70dB(A)']^'*'`,
+               
+               HATS_MRT65dBA.B0=`HATS_MRT['65dB(A)']`-`HATS_MRT['65dB(A)']+B`,
+               HATS_MRT65dBA.W0=`HATS_MRT['65dB(A)']`-`HATS_MRT['65dB(A)']+W`,
+               HATS_MRT65dBA=`HATS_MRT['65dB(A)']`-`HATS_MRT['65dB(A)']^'*'`,
+               HATS_MRT65dBA.B=`HATS_MRT['65dB(A)']`-`HATS_MRT['65dB(A)']^'*'+B`,
+               HATS_MRT65dBA.W=`HATS_MRT['65dB(A)']`-`HATS_MRT['65dB(A)']^'*'+W`,
+               HATS_MRT70dBA=`HATS_MRT['70dB(A)']`-`HATS_MRT['70dB(A)']^'*'`,
+               
+               HATS_TRA65dBA.B0=`HATS_TRA['65dB(A)']`-`HATS_TRA['65dB(A)']+B`,
+               HATS_TRA65dBA.W0=`HATS_TRA['65dB(A)']`-`HATS_TRA['65dB(A)']+W`,
+               HATS_TRA65dBA=`HATS_TRA['65dB(A)']`-`HATS_TRA['65dB(A)']^'*'`,
+               HATS_TRA65dBA.B=`HATS_TRA['65dB(A)']`-`HATS_TRA['65dB(A)']^'*'+B`,
+               HATS_TRA65dBA.W=`HATS_TRA['65dB(A)']`-`HATS_TRA['65dB(A)']^'*'+W`,
+               HATS_TRA70dBA=`HATS_TRA['70dB(A)']`-`HATS_TRA['70dB(A)']^'*'`,
+               
+               EA_AIR65dBA.B0=`EA_AIR['65dB(A)']`-`EA_AIR['65dB(A)']+B`,
+               EA_AIR65dBA.W0=`EA_AIR['65dB(A)']`-`EA_AIR['65dB(A)']+W`,
+               EA_AIR65dBA=`EA_AIR['65dB(A)']`-`EA_AIR['65dB(A)']^'*'`,
+               EA_AIR65dBA.B=`EA_AIR['65dB(A)']`-`EA_AIR['65dB(A)']^'*'+B`,
+               EA_AIR65dBA.W=`EA_AIR['65dB(A)']`-`EA_AIR['65dB(A)']^'*'+W`,
+               EA_AIR70dBA=`EA_AIR['70dB(A)']`-`EA_AIR['70dB(A)']^'*'`,
+               
+               EA_MRT65dBA.B0=`EA_MRT['65dB(A)']`-`EA_MRT['65dB(A)']+B`,
+               EA_MRT65dBA.W0=`EA_MRT['65dB(A)']`-`EA_MRT['65dB(A)']+W`,
+               EA_MRT65dBA=`EA_MRT['65dB(A)']`-`EA_MRT['65dB(A)']^'*'`,
+               EA_MRT65dBA.B=`EA_MRT['65dB(A)']`-`EA_MRT['65dB(A)']^'*'+B`,
+               EA_MRT65dBA.W=`EA_MRT['65dB(A)']`-`EA_MRT['65dB(A)']^'*'+W`,
+               EA_MRT70dBA=`EA_MRT['70dB(A)']`-`EA_MRT['70dB(A)']^'*'`,
+               
+               EA_TRA65dBA.B0=`EA_TRA['65dB(A)']`-`EA_TRA['65dB(A)']+B`,
+               EA_TRA65dBA.W0=`EA_TRA['65dB(A)']`-`EA_TRA['65dB(A)']+W`,
+               EA_TRA65dBA=`EA_TRA['65dB(A)']`-`EA_TRA['65dB(A)']^'*'`,
+               EA_TRA65dBA.B=`EA_TRA['65dB(A)']`-`EA_TRA['65dB(A)']^'*'+B`,
+               EA_TRA65dBA.W=`EA_TRA['65dB(A)']`-`EA_TRA['65dB(A)']^'*'+W`,
+               EA_TRA70dBA=`EA_TRA['70dB(A)']`-`EA_TRA['70dB(A)']^'*'`) %>%
+        dplyr::select(!c(2:51)) %>%
+        dplyr::mutate(across(!1, round, 2)) %>%
+        kableExtra::kbl(booktabs = T, linesep = "",
+                        #format = "latex",
+                        format = "html",
+                        label = "attHATSEA_SV",
+                        caption = "Difference between mean acoustic and 
+                        psychoacoustic indices before and after intervention, 
+                        across both KEMAR HATS and energetic average measurements") %>%
+        #kable_styling(latex_table_env = "tabularx") %>%
+        kable_paper(full_width = T) %>%
+        add_header_above(c(" ", "65dB(A)" = 5, "70dB(A)" = 1, 
+                           "65dB(A)" = 5, "70dB(A)" = 1, 
+                           "65dB(A)" = 5, "70dB(A)" = 1, 
+                           "65dB(A)" = 5, "70dB(A)" = 1, 
+                           "65dB(A)" = 5, "70dB(A)" = 1, 
+                           "65dB(A)" = 5, "70dB(A)" = 1), bold = T) %>%
+        add_header_above(c(" ", "ANC:NO" = 2, "ANC:YES" = 4, 
+                           "ANC:NO" = 2, "ANC:YES" = 4, 
+                           "ANC:NO" = 2, "ANC:YES" = 4, 
+                           "ANC:NO" = 2, "ANC:YES" = 4, 
+                           "ANC:NO" = 2, "ANC:YES" = 4, 
+                           "ANC:NO" = 2, "ANC:YES" = 4), bold = T) %>%
+        add_header_above(c(" ", "Aircraft" = 6, "MRT" = 6, "Traffic" = 6, 
+                           "Aircraft" = 6, "MRT" = 6, "Traffic" = 6),
+                         bold = T) %>%
+        add_header_above(c(" ", "HATS" = 18, 
+                           "Energetic Average" = 18), bold = T) #%>%
+        #save_kable(paste0(getwd(),"/diffHATSEV_SV.tex"))
+
+table.sv.att
+```
+
+### FFT (dBA)
+
+```{r FFTdBA, message=FALSE}
+
+#color
+set1clr<-brewer.pal(n = 9,"Set1")
+
+#mean across runs and EA/HATS channels
+summary.FFT.dBA.df <- data.l[["data.ffta"]] %>%
+        #mean across runs
+        group_by(freq,stimuliID) %>%
+        dplyr::summarise(across(-c(run),list(meandB))) %>%
+        ungroup() %>%
+        `colnames<-`(gsub("_1","",colnames(.))) %>% #remove "_1"
+        rowwise() %>% #mean across EA/HATS mics
+        mutate(EA=meandB(c(mic5,mic13,mic14,mic15,mic17,mic18)),
+               HATS=meandB(c(HATS.L,HATS.R))) %>%
+        dplyr::select(!c(mic5,mic13,mic14,mic15,mic17,mic18,HATS.L,HATS.R)) %>%
+        filter(!stimuliID==0) %>%
+        ungroup() %>%
+        left_join(.,stimuli.trackInfo.names,by="stimuliID") %>%
+        pivot_longer(cols = c(EA,HATS),names_to = "measurement",values_to = "dBA")
+        
+g.65dBA<-ggplot(data = summary.FFT.dBA.df %>% 
+               mutate(stimuliID=as.factor(stimuliID)) %>%
+               filter(SPL=="65dB"), 
+       aes(x = freq,y = dBA,color=Masker)) +
+        facet_grid(NoiseType~measurement) +
+        geom_line(aes(linetype=ANC))+
+        scale_x_log10(limits=c(100,10000)) +
+        annotation_logticks(sides="b") + 
+        scale_color_manual(values = set1clr) +
+        ylim(20,50) + xlab("Frequency, Hz") + 
+        scale_color_manual(values = set1clr) +
+        ylab ("Sound Pressure Level, dB(A)") + theme(legend.position="bottom")
+g.65dBA
+
+ggsave("./outputs/65dBA_HATS.pdf",plot = g.65dBA, width = 1800, height = 1500, units = "px",scale = 1)
+
+#70 dBA only HATS
+g.70dBA<-ggplot(data = summary.FFT.dBA.df %>% 
+               mutate(stimuliID=as.factor(stimuliID)) %>%
+               filter(SPL=="70dB" & measurement=="HATS"), 
+       aes(x = freq,y = dBA,color=NoiseType)) +
+        facet_wrap(~NoiseType,nrow = 3) +
+        geom_line(aes(linetype=ANC))+
+        ylim(24,55) + xlab("Frequency, Hz") + 
+        scale_color_manual(values = set1clr) +
+        ylab ("Sound Pressure Level, dB(A)") +
+        scale_x_log10(limits=c(100,10000)) +
+        annotation_logticks(sides="b") +
+        theme(legend.position="none",panel.grid.minor = element_blank())
+g.70dBA
+ggsave("./outputs/70dBA_HATS.pdf",plot = g.70dBA, width = 900, height = 1500, units = "px",scale = 1)
+```
+
+### FFT (dBC)
+
+```{r FFT, message=FALSE}
+
+#color
+set1clr<-brewer.pal(n = 9,"Set1")
+
+#mean across runs and EA/HATS channels
+summary.FFT.dBC.df <- data.l[["data.fftc"]] %>%
+        #mean across runs
+        group_by(freq,stimuliID) %>%
+        dplyr::summarise(across(-c(run),list(meandB))) %>%
+        ungroup() %>%
+        `colnames<-`(gsub("_1","",colnames(.))) %>% #remove "_1"
+        rowwise() %>% #mean across EA/HATS mics
+        mutate(EA=meandB(c(mic5,mic13,mic14,mic15,mic17,mic18)),
+               HATS=meandB(c(HATS.L,HATS.R))) %>%
+        dplyr::select(!c(mic5,mic13,mic14,mic15,mic17,mic18,HATS.L,HATS.R)) %>%
+        filter(!stimuliID==0) %>%
+        ungroup() %>%
+        left_join(.,stimuli.trackInfo.names,by="stimuliID") %>%
+        pivot_longer(cols = c(EA,HATS),names_to = "measurement",values_to = "dBC")
+        
+g.65dBC<-ggplot(data = summary.FFT.dBC.df %>% 
+               mutate(stimuliID=as.factor(stimuliID)) %>%
+               filter(SPL=="65dB"), 
+       aes(x = freq,y = dBC,color=Masker)) +
+        facet_grid(NoiseType~measurement) +
+        geom_line(aes(linetype=ANC))+
+        scale_x_log10(limits=c(100,10000)) +
+        annotation_logticks(sides="b") + 
+        scale_color_manual(values = set1clr) +
+        ylim(20,50) + xlab("Frequency, Hz") + 
+        scale_color_manual(values = set1clr) +
+        ylab ("Sound Pressure Level, dB(C)") + theme(legend.position="bottom")
+g.65dBC
+
+ggsave("./outputs/65dBC_HATS.pdf",plot = g.65dBC, width = 1800, height = 1500, units = "px",scale = 1)
+
+#70 dBA only HATS
+g.70dBC<-ggplot(data = summary.FFT.dBC.df %>% 
+               mutate(stimuliID=as.factor(stimuliID)) %>%
+               filter(SPL=="70dB" & measurement=="HATS"), 
+       aes(x = freq,y = dBC,color=NoiseType)) +
+        facet_wrap(~NoiseType,nrow = 3) +
+        geom_line(aes(linetype=ANC))+
+        ylim(24,55) + xlab("Frequency, Hz") + 
+        scale_color_manual(values = set1clr) +
+        ylab ("Sound Pressure Level, dB(C)") +
+        scale_x_log10(limits=c(100,10000)) +
+        annotation_logticks(sides="b") +
+        theme(legend.position="none",panel.grid.minor = element_blank())
+g.70dBC
+ggsave("./outputs/70dBC_HATS.pdf",plot = g.70dBC, width = 900, height = 1500, units = "px",scale = 1)
+
+#create combined plot of 70dBA and 70dBC
+
+#70 dBA only HATS
+g.70dBC_legend<-ggplot(data = summary.FFT.dBC.df %>% 
+               mutate(stimuliID=as.factor(stimuliID)) %>%
+               filter(SPL=="70dB" & measurement=="HATS"), 
+       aes(x = freq,y = dBC,color=NoiseType)) +
+        facet_wrap(~NoiseType,nrow = 3) +
+        geom_line(aes(linetype=ANC))+
+        ylim(24,55) + xlab("Frequency, Hz") + 
+        scale_color_manual(values = set1clr) +
+        ylab ("Sound Pressure Level, dB(C)") +
+        scale_x_log10(limits=c(100,10000)) +
+        annotation_logticks(sides="b") +
+        theme(legend.position="bottom",panel.grid.minor = element_blank())
+
+# Create user-defined function, which extracts legends from ggplots
+extract_legend <- function(my_ggp) {
+  step1 <- ggplot_gtable(ggplot_build(my_ggp))
+  step2 <- which(sapply(step1$grobs, function(x) x$name) == "guide-box")
+  step3 <- step1$grobs[[step2]]
+  return(step3)
+}
+
+# Apply user-defined function to extract legend
+shared_legend <- extract_legend(g.70dBC_legend)
+
+# combine plots with shared legend
+g.comb.70dB<-grid.arrange(arrangeGrob(g.70dBA, g.70dBC, ncol = 2),
+             shared_legend, nrow = 2, heights = c(20, 1))
+
+ggsave("./outputs/70dB_HATS_comb.pdf",plot = g.comb.70dB, width = 1800, height = 1500, units = "px",scale = 1)
 
 ```
 
@@ -633,357 +945,76 @@ ISOPLEV.comb.stat.tbl <- ISOPLEV.comb.stat %>%
 ISOPLEV.comb.stat.tbl
 ```
 
-### dBA
 
-```{r obj.dBA, message=FALSE}
+## PAQ 2D density plots
 
-#scatter plots of SPL
+```{r PAQ2D}
 
-#summarise data for dBA plot
-summary.spla.df <- data.l[["data.spla"]] %>%
-        group_by(stimuliID,run) %>%
-        dplyr::summarise(across(-c(time),meandB)) %>% #compute Leq 30s
-        #mutate() %>% #loudest ear
-        rowwise() %>%
-        mutate(#maxHATS=pmax(HATS.L,HATS.R),
-               avgHATS=meandB(HATS.L,HATS.R), #energy ave HATS
-               EA=meandB(c(mic5,mic13,mic14,
-                           mic15,mic17,mic18))) %>% #energy ave mic 
-        dplyr::select(!c(mic18:mic15)) %>%
-        pivot_longer(cols=c("avgHATS","EA"),names_to = "Measurement",values_to = "dBA") %>%
-        group_by(stimuliID,Measurement) %>%
-        mutate(sd=sd(dBA)) %>%
-        group_by(stimuliID,Measurement) %>%
-        dplyr::summarise(across(-c(run),meandB))
+#define color palette for density plot using pal package
+densityClr<-census.blueyellow()[c(3,6,9)]
 
-#noise floor
-print(paste("Noise Floor:",round(summary.spla.df [2,"dBA"],2),"±",
-            round(summary.spla.df [2,"sd"],2)))
+#aircraft
+g.2Dden.air<-ggplot(
+        data=data.subj.rel %>% 
+                dplyr::filter(NoiseType=="Aircraft"& SPL=="65dB"),
+        aes(x = ISOPL, y = ISOEV, group = Masker)) +
+        #facet_wrap(~ANC)+
+        geom_point(aes(group = Masker,color=Masker),alpha=0.3) +
+        stat_density_2d(geom = "polygon", aes(alpha = ..level..,
+                                              fill = Masker),
+                  bins = 5) +
+        scale_fill_manual(values = densityClr) +
+        scale_color_manual(values = densityClr) +
+        xlim(c(-1,1)) + ylim(c(-1,1)) + 
+        ylab(expression(italic(E))) +
+        xlab(expression(italic(P))) + 
+        theme(legend.position = "left",legend.box="vertical")
 
-summary.spla.df <- summary.spla.df %>% filter(!stimuliID==0)
+#add density plot at margins
+g.2Dden.air.marg<-ggMarginal(g.2Dden.air,groupColour = T,
+                             groupFill = T)
+g.2Dden.air.marg
+ggsave("./outputs/2DISO_Aircraft.pdf",plot = g.2Dden.air.marg, width = 2000, height = 1700, units = "px",scale = 1)
 
-stimuli.trackInfo <- trackInfo[2:nrow(trackInfo),]
+#train
+g.2Dden.train<-ggplot(data=data.subj.rel %>% filter(NoiseType=="Train"& SPL=="65dB"), 
+       aes(x = ISOPL, y = ISOEV, group = Masker)) +
+        #facet_wrap(~ANC)+
+        geom_point(aes(group = Masker,color=Masker),alpha=0.3) +
+        stat_density_2d(geom = "polygon", aes(alpha = ..level..,
+                                              fill = Masker),
+                  bins = 5) +
+        scale_fill_manual(values = densityClr) +
+        scale_color_manual(values = densityClr) +
+        xlim(c(-1,1)) + ylim(c(-1,1)) +
+        xlab(expression(italic(P))) + 
+        ylab(expression(italic(E))) +
+        theme(legend.position = "left",legend.box="vertical")
 
-#plot SPL dBA as a function of stimuli
-ggplot(summary.spla.df, aes(x = stimuliID, 
-                           y = dBA, group=stimuliID, 
-                           color=Measurement)) +
-        geom_point() +
-        geom_errorbar(aes(ymin=dBA-sd, ymax=dBA+sd), width=.2,
-                 position=position_dodge(0.05))
+#add density plot at margins
+g.2Dden.train.marg<-ggMarginal(g.2Dden.train,groupColour = T,groupFill = T)
+g.2Dden.train.marg
+ggsave("./outputs/2DISO_Train.pdf",plot = g.2Dden.train.marg, width = 2000, height = 1700, units = "px",scale = 1)
 
+#traffic
+g.2Dden.traffic<-ggplot(data=data.subj.rel %>% filter(NoiseType=="Traffic" & SPL=="65dB"), 
+       aes(x = ISOPL, y = ISOEV, group = Masker)) +
+        #facet_wrap(~ANC)+
+        geom_point(aes(color=Masker,group = Masker,),alpha=0.3) +
+        stat_density_2d(geom = "polygon", aes(alpha = stat(level),
+                                              fill = Masker,
+                                              group = Masker),
+                  bins = 4,contour_var = "ndensity",n=80) + #normalised density
+        scale_fill_manual(values = densityClr) +
+        scale_color_manual(values = densityClr) +
+        xlim(c(-1,1)) + ylim(c(-1,1)) +
+        xlab(expression(italic(P))) + 
+        ylab(expression(italic(E))) +
+        theme(legend.position = "left",legend.box="vertical")
+
+
+#add density plot at margins
+g.2Dden.traffic.marg<-ggMarginal(g.2Dden.traffic,groupColour = T,groupFill = T)
+g.2Dden.traffic.marg
+ggsave("./outputs/2DISO_Traffic.pdf",plot = g.2Dden.traffic.marg, width = 2000, height = 1700, units = "px",scale = 1)
 ```
-### Single value objective indicators
-
-```{r}
-
-#stimuli names for plotting
-stimuli.trackInfo.names <- trackInfo[2:nrow(trackInfo),] %>%
-        dplyr::select(!c("No.")) %>%
-        dplyr::mutate(NoiseType=ifelse(NoiseType=="Train","MRT",
-                                ifelse(NoiseType=="Aircraft","AIR",
-                                       ifelse(NoiseType=="Traffic","TRA",NoiseType))),
-               Masker=ifelse(Masker=="Bird","B",
-                             ifelse(Masker=="Water","W",Masker))) %>%
-        dplyr::mutate(stimuliID=row_number()) %>%
-        dplyr::mutate(stimuli.name.short=case_when(
-                Masker=="None" & ANC == "No" ~ paste0(NoiseType,"@",SPL),
-                Masker=="None" & ANC == "Yes" ~ paste0(NoiseType,"*@",SPL),
-                Masker!="None" & ANC == "No" ~ paste0(NoiseType,"@",SPL,
-                                                      "+",Masker),
-                Masker!="None" & ANC == "Yes" ~ paste0(NoiseType,"*@",SPL,
-                                                       "+",Masker))) %>%
-        dplyr::mutate(stimuli.name=case_when(
-                Masker=="None" & ANC == "No" ~ paste0(NoiseType,"['",
-                                                      SPL,"(A)']"),
-                Masker=="None" & ANC == "Yes" ~ paste0(NoiseType,"['",
-                                                       SPL, "(A)']^'*'"),
-                Masker!="None" & ANC == "No" ~ paste0(NoiseType,"['",
-                                                      SPL,"(A)']+",Masker),
-                Masker!="None" & ANC == "Yes" ~ paste0(NoiseType,"['",SPL,
-                                                     "(A)']^'*'+",Masker)))
-
-mean.SV <- data.l[["data.sv"]] %>%
-        dplyr::select(!Channel) %>%
-        dplyr::filter(!stimuliID==0) %>% #remove noise floor
-        group_by(stimuliID,measurement) %>%
-        dplyr::summarise(across(everything(),list(mean))) %>%
-        ungroup %>%
-        `colnames<-`(gsub("_1","",colnames(.))) %>%
-        `colnames<-`(gsub("\\.$",")",colnames(.))) %>%
-        `colnames<-`(gsub("\\.","(",colnames(.))) %>%
-        pivot_longer(cols = !c("stimuliID","measurement"), 
-                     names_to = "Indicator",values_to = "Value") %>%
-        #add stimuli details by merging
-        left_join(.,stimuli.trackInfo.names, by="stimuliID") %>%
-        dplyr::select(!c("NoiseType","Masker","ANC","SPL",
-                         "stimuliID","stimuli.name.short")) %>%
-        pivot_wider(names_from = stimuli.name, values_from = Value) %>%
-        `colnames<-`(cbind(c("measurement","indicator",
-                             stimuli.trackInfo.names$stimuli.name.short)))
-
-```
-### dB Attenuation
-
-```{r}
-#compute difference before and after intervention only for dBA and dBC
-mean.SV.att <- mean.SV %>%
-        dplyr::filter(grepl("(C)|(A)", indicator)) %>%
-        #compute attenuation
-        dplyr::mutate(`AIR@65dB`=`AIR@65dB`-`AIR*@65dB`,
-                      `MRT@65dB`=`MRT@65dB`-`MRT*@65dB`,
-                      `TRA@65dB`=`TRA@65dB`-`TRA*@65dB`,
-                      `AIR@70dB`=`AIR@70dB`-`AIR*@70dB`,
-                      `MRT@70dB`=`MRT@70dB`-`MRT*@70dB`,
-                      `TRA@70dB`=`TRA@70dB`-`TRA*@70dB`,
-                      `AIR@65dB+B`=`AIR@65dB+B`-`AIR*@65dB+B`,
-                      `MRT@65dB+B`=`MRT@65dB+B`-`MRT*@65dB+B`,
-                      `TRA@65dB+B`=`TRA@65dB+B`-`TRA*@65dB+B`,
-                      `AIR@65dB+W`=`AIR@65dB+W`-`AIR*@65dB+W`,
-                      `MRT@65dB+W`=`MRT@65dB+W`-`MRT*@65dB+W`,
-                      `TRA@65dB+W`=`TRA@65dB+W`-`TRA*@65dB+W`) %>%
-        dplyr::select(!matches("\\*|60")) %>%
-        dplyr::mutate(weight=ifelse(grepl("(C)",indicator),"C","A")) %>%
-        group_by(measurement,weight) %>%
-        dplyr::summarise_all(list(mean=mean,sd=sd))
-
-#generate table of attenuation scores
-table.sv.att<- mean.SV %>%
-        `colnames<-`(cbind(c("measurement","indicator",
-                             stimuli.trackInfo.names$stimuli.name))) %>%
-        pivot_longer(names_to = "stimuli.name",values_to = "value",
-                     cols = -c(1,2)) %>%
-        pivot_wider(names_from = indicator, values_from = value) %>%
-        dplyr::mutate(
-                PA=ifelse(S>1.75,
-                          N5*(1+sqrt(((S-1.75)*0.25*log10(N5+10))^2+
-                                             ((2.18/N5^0.4)*(0.4*Fluc95+0.6*R))^2)),
-                         N5*(1+sqrt(((2.18/N5^0.4)*(0.4*Fluc95+0.6*R))^2))),
-               `L10(A)-L90(A)`=`L10(A)`-`L90(A)`,
-               `L(C)-L(A)`=`L10(C)`-`L(A)`) %>%
-        #dplyr::select(!c(1,3:6)) %>%
-        pivot_longer(cols = !c(1,2),
-                     names_to = "Parameters", values_to = "Value") %>%
-        pivot_wider(names_from = c("measurement","stimuli.name"),
-                    values_from = Value) %>%
-        dplyr::mutate(HATS_AIR65dBA.B0=`HATS_AIR['65dB(A)']`-`HATS_AIR['65dB(A)']+B`,
-               HATS_AIR65dBA.W0=`HATS_AIR['65dB(A)']`-`HATS_AIR['65dB(A)']+W`,
-               HATS_AIR65dBA=`HATS_AIR['65dB(A)']`-`HATS_AIR['65dB(A)']^'*'`,
-               HATS_AIR65dBA.B=`HATS_AIR['65dB(A)']`-`HATS_AIR['65dB(A)']^'*'+B`,
-               HATS_AIR65dBA.W=`HATS_AIR['65dB(A)']`-`HATS_AIR['65dB(A)']^'*'+W`,
-               HATS_AIR70dBA=`HATS_AIR['70dB(A)']`-`HATS_AIR['70dB(A)']^'*'`,
-               
-               HATS_MRT65dBA.B0=`HATS_MRT['65dB(A)']`-`HATS_MRT['65dB(A)']+B`,
-               HATS_MRT65dBA.W0=`HATS_MRT['65dB(A)']`-`HATS_MRT['65dB(A)']+W`,
-               HATS_MRT65dBA=`HATS_MRT['65dB(A)']`-`HATS_MRT['65dB(A)']^'*'`,
-               HATS_MRT65dBA.B=`HATS_MRT['65dB(A)']`-`HATS_MRT['65dB(A)']^'*'+B`,
-               HATS_MRT65dBA.W=`HATS_MRT['65dB(A)']`-`HATS_MRT['65dB(A)']^'*'+W`,
-               HATS_MRT70dBA=`HATS_MRT['70dB(A)']`-`HATS_MRT['70dB(A)']^'*'`,
-               
-               HATS_TRA65dBA.B0=`HATS_TRA['65dB(A)']`-`HATS_TRA['65dB(A)']+B`,
-               HATS_TRA65dBA.W0=`HATS_TRA['65dB(A)']`-`HATS_TRA['65dB(A)']+W`,
-               HATS_TRA65dBA=`HATS_TRA['65dB(A)']`-`HATS_TRA['65dB(A)']^'*'`,
-               HATS_TRA65dBA.B=`HATS_TRA['65dB(A)']`-`HATS_TRA['65dB(A)']^'*'+B`,
-               HATS_TRA65dBA.W=`HATS_TRA['65dB(A)']`-`HATS_TRA['65dB(A)']^'*'+W`,
-               HATS_TRA70dBA=`HATS_TRA['70dB(A)']`-`HATS_TRA['70dB(A)']^'*'`,
-               
-               EA_AIR65dBA.B0=`EA_AIR['65dB(A)']`-`EA_AIR['65dB(A)']+B`,
-               EA_AIR65dBA.W0=`EA_AIR['65dB(A)']`-`EA_AIR['65dB(A)']+W`,
-               EA_AIR65dBA=`EA_AIR['65dB(A)']`-`EA_AIR['65dB(A)']^'*'`,
-               EA_AIR65dBA.B=`EA_AIR['65dB(A)']`-`EA_AIR['65dB(A)']^'*'+B`,
-               EA_AIR65dBA.W=`EA_AIR['65dB(A)']`-`EA_AIR['65dB(A)']^'*'+W`,
-               EA_AIR70dBA=`EA_AIR['70dB(A)']`-`EA_AIR['70dB(A)']^'*'`,
-               
-               EA_MRT65dBA.B0=`EA_MRT['65dB(A)']`-`EA_MRT['65dB(A)']+B`,
-               EA_MRT65dBA.W0=`EA_MRT['65dB(A)']`-`EA_MRT['65dB(A)']+W`,
-               EA_MRT65dBA=`EA_MRT['65dB(A)']`-`EA_MRT['65dB(A)']^'*'`,
-               EA_MRT65dBA.B=`EA_MRT['65dB(A)']`-`EA_MRT['65dB(A)']^'*'+B`,
-               EA_MRT65dBA.W=`EA_MRT['65dB(A)']`-`EA_MRT['65dB(A)']^'*'+W`,
-               EA_MRT70dBA=`EA_MRT['70dB(A)']`-`EA_MRT['70dB(A)']^'*'`,
-               
-               EA_TRA65dBA.B0=`EA_TRA['65dB(A)']`-`EA_TRA['65dB(A)']+B`,
-               EA_TRA65dBA.W0=`EA_TRA['65dB(A)']`-`EA_TRA['65dB(A)']+W`,
-               EA_TRA65dBA=`EA_TRA['65dB(A)']`-`EA_TRA['65dB(A)']^'*'`,
-               EA_TRA65dBA.B=`EA_TRA['65dB(A)']`-`EA_TRA['65dB(A)']^'*'+B`,
-               EA_TRA65dBA.W=`EA_TRA['65dB(A)']`-`EA_TRA['65dB(A)']^'*'+W`,
-               EA_TRA70dBA=`EA_TRA['70dB(A)']`-`EA_TRA['70dB(A)']^'*'`) %>%
-        dplyr::select(!c(2:51)) %>%
-        dplyr::mutate(across(!1, round, 2)) %>%
-        kableExtra::kbl(booktabs = T, linesep = "",
-                        #format = "latex",
-                        format = "html",
-                        label = "attHATSEA_SV",
-                        caption = "Difference between mean acoustic and 
-                        psychoacoustic indices before and after intervention, 
-                        across both KEMAR HATS and energetic average measurements") %>%
-        #kable_styling(latex_table_env = "tabularx") %>%
-        kable_paper(full_width = T) %>%
-        add_header_above(c(" ", "65dB(A)" = 5, "70dB(A)" = 1, 
-                           "65dB(A)" = 5, "70dB(A)" = 1, 
-                           "65dB(A)" = 5, "70dB(A)" = 1, 
-                           "65dB(A)" = 5, "70dB(A)" = 1, 
-                           "65dB(A)" = 5, "70dB(A)" = 1, 
-                           "65dB(A)" = 5, "70dB(A)" = 1), bold = T) %>%
-        add_header_above(c(" ", "ANC:NO" = 2, "ANC:YES" = 4, 
-                           "ANC:NO" = 2, "ANC:YES" = 4, 
-                           "ANC:NO" = 2, "ANC:YES" = 4, 
-                           "ANC:NO" = 2, "ANC:YES" = 4, 
-                           "ANC:NO" = 2, "ANC:YES" = 4, 
-                           "ANC:NO" = 2, "ANC:YES" = 4), bold = T) %>%
-        add_header_above(c(" ", "Aircraft" = 6, "MRT" = 6, "Traffic" = 6, 
-                           "Aircraft" = 6, "MRT" = 6, "Traffic" = 6),
-                         bold = T) %>%
-        add_header_above(c(" ", "HATS" = 18, 
-                           "Energetic Average" = 18), bold = T) #%>%
-        #save_kable(paste0(getwd(),"/diffHATSEV_SV.tex"))
-
-table.sv.att
-```
-
-
-### FFT (dBA)
-
-```{r FFTdBA, message=FALSE}
-
-#color
-set1clr<-brewer.pal(n = 9,"Set1")
-
-#mean across runs and EA/HATS channels
-summary.FFT.dBA.df <- data.l[["data.ffta"]] %>%
-        #mean across runs
-        group_by(freq,stimuliID) %>%
-        dplyr::summarise(across(-c(run),list(meandB))) %>%
-        ungroup() %>%
-        `colnames<-`(gsub("_1","",colnames(.))) %>% #remove "_1"
-        rowwise() %>% #mean across EA/HATS mics
-        mutate(EA=meandB(c(mic5,mic13,mic14,mic15,mic17,mic18)),
-               HATS=meandB(c(HATS.L,HATS.R))) %>%
-        dplyr::select(!c(mic5,mic13,mic14,mic15,mic17,mic18,HATS.L,HATS.R)) %>%
-        filter(!stimuliID==0) %>%
-        ungroup() %>%
-        left_join(.,stimuli.trackInfo.names,by="stimuliID") %>%
-        pivot_longer(cols = c(EA,HATS),names_to = "measurement",values_to = "dBA")
-        
-g.65dBA<-ggplot(data = summary.FFT.dBA.df %>% 
-               mutate(stimuliID=as.factor(stimuliID)) %>%
-               filter(SPL=="65dB"), 
-       aes(x = freq,y = dBA,color=Masker)) +
-        facet_grid(NoiseType~measurement) +
-        geom_line(aes(linetype=ANC))+
-        scale_x_log10(limits=c(100,10000)) +
-        annotation_logticks(sides="b") + 
-        scale_color_manual(values = set1clr) +
-        ylim(20,50) + xlab("Frequency, Hz") + 
-        scale_color_manual(values = set1clr) +
-        ylab ("Sound Pressure Level, dB(A)") + theme(legend.position="bottom")
-g.65dBA
-
-ggsave("./outputs/65dBA_HATS.pdf",plot = g.65dBA, width = 1800, height = 1500, units = "px",scale = 1)
-
-#70 dBA only HATS
-g.70dBA<-ggplot(data = summary.FFT.dBA.df %>% 
-               mutate(stimuliID=as.factor(stimuliID)) %>%
-               filter(SPL=="70dB" & measurement=="HATS"), 
-       aes(x = freq,y = dBA,color=NoiseType)) +
-        facet_wrap(~NoiseType,nrow = 3) +
-        geom_line(aes(linetype=ANC))+
-        ylim(24,55) + xlab("Frequency, Hz") + 
-        scale_color_manual(values = set1clr) +
-        ylab ("Sound Pressure Level, dB(A)") +
-        scale_x_log10(limits=c(100,10000)) +
-        annotation_logticks(sides="b") +
-        theme(legend.position="none",panel.grid.minor = element_blank())
-g.70dBA
-ggsave("./outputs/70dBA_HATS.pdf",plot = g.70dBA, width = 900, height = 1500, units = "px",scale = 1)
-```
-
-### FFT (dBC)
-
-```{r FFT, message=FALSE}
-
-#color
-set1clr<-brewer.pal(n = 9,"Set1")
-
-#mean across runs and EA/HATS channels
-summary.FFT.dBC.df <- data.l[["data.fftc"]] %>%
-        #mean across runs
-        group_by(freq,stimuliID) %>%
-        dplyr::summarise(across(-c(run),list(meandB))) %>%
-        ungroup() %>%
-        `colnames<-`(gsub("_1","",colnames(.))) %>% #remove "_1"
-        rowwise() %>% #mean across EA/HATS mics
-        mutate(EA=meandB(c(mic5,mic13,mic14,mic15,mic17,mic18)),
-               HATS=meandB(c(HATS.L,HATS.R))) %>%
-        dplyr::select(!c(mic5,mic13,mic14,mic15,mic17,mic18,HATS.L,HATS.R)) %>%
-        filter(!stimuliID==0) %>%
-        ungroup() %>%
-        left_join(.,stimuli.trackInfo.names,by="stimuliID") %>%
-        pivot_longer(cols = c(EA,HATS),names_to = "measurement",values_to = "dBC")
-        
-g.65dBC<-ggplot(data = summary.FFT.dBC.df %>% 
-               mutate(stimuliID=as.factor(stimuliID)) %>%
-               filter(SPL=="65dB"), 
-       aes(x = freq,y = dBC,color=Masker)) +
-        facet_grid(NoiseType~measurement) +
-        geom_line(aes(linetype=ANC))+
-        scale_x_log10(limits=c(100,10000)) +
-        annotation_logticks(sides="b") + 
-        scale_color_manual(values = set1clr) +
-        ylim(20,50) + xlab("Frequency, Hz") + 
-        scale_color_manual(values = set1clr) +
-        ylab ("Sound Pressure Level, dB(C)") + theme(legend.position="bottom")
-g.65dBC
-
-ggsave("./outputs/65dBC_HATS.pdf",plot = g.65dBC, width = 1800, height = 1500, units = "px",scale = 1)
-
-#70 dBA only HATS
-g.70dBC<-ggplot(data = summary.FFT.dBC.df %>% 
-               mutate(stimuliID=as.factor(stimuliID)) %>%
-               filter(SPL=="70dB" & measurement=="HATS"), 
-       aes(x = freq,y = dBC,color=NoiseType)) +
-        facet_wrap(~NoiseType,nrow = 3) +
-        geom_line(aes(linetype=ANC))+
-        ylim(24,55) + xlab("Frequency, Hz") + 
-        scale_color_manual(values = set1clr) +
-        ylab ("Sound Pressure Level, dB(C)") +
-        scale_x_log10(limits=c(100,10000)) +
-        annotation_logticks(sides="b") +
-        theme(legend.position="none",panel.grid.minor = element_blank())
-g.70dBC
-ggsave("./outputs/70dBC_HATS.pdf",plot = g.70dBC, width = 900, height = 1500, units = "px",scale = 1)
-
-#create combined plot of 70dBA and 70dBC
-
-#70 dBA only HATS
-g.70dBC_legend<-ggplot(data = summary.FFT.dBC.df %>% 
-               mutate(stimuliID=as.factor(stimuliID)) %>%
-               filter(SPL=="70dB" & measurement=="HATS"), 
-       aes(x = freq,y = dBC,color=NoiseType)) +
-        facet_wrap(~NoiseType,nrow = 3) +
-        geom_line(aes(linetype=ANC))+
-        ylim(24,55) + xlab("Frequency, Hz") + 
-        scale_color_manual(values = set1clr) +
-        ylab ("Sound Pressure Level, dB(C)") +
-        scale_x_log10(limits=c(100,10000)) +
-        annotation_logticks(sides="b") +
-        theme(legend.position="bottom",panel.grid.minor = element_blank())
-
-# Create user-defined function, which extracts legends from ggplots
-extract_legend <- function(my_ggp) {
-  step1 <- ggplot_gtable(ggplot_build(my_ggp))
-  step2 <- which(sapply(step1$grobs, function(x) x$name) == "guide-box")
-  step3 <- step1$grobs[[step2]]
-  return(step3)
-}
-
-# Apply user-defined function to extract legend
-shared_legend <- extract_legend(g.70dBC_legend)
-
-# combine plots with shared legend
-g.comb.70dB<-grid.arrange(arrangeGrob(g.70dBA, g.70dBC, ncol = 2),
-             shared_legend, nrow = 2, heights = c(20, 1))
-
-ggsave("./outputs/70dB_HATS_comb.pdf",plot = g.comb.70dB, width = 1800, height = 1500, units = "px",scale = 1)
-
-```
-
