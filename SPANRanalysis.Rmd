@@ -1,21 +1,30 @@
 ---
 title: "Replication code for: Anti-noise window: subjective perception of active noise reduction and effect of informational masking"
 output: github_document
+always_allow_html: true
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-library(dataverse)
-library(tidyverse)
+
+#data packages
+require(dataverse)
+require(tidyverse)
+require(broom)
 
 #statistical packages
-library(psych)
-library(ARTool)
-library(RTHORR)
-library(lsr)
+require(psych)
+require(ARTool)
+require(RTHORR)
+require(lsr)
+require(MVN)
+require(rstatix)
 
 #formatting
-library(kableExtra)
+require(kableExtra)
+
+#acoustic package
+require(seewave)
 
 library(raster)
 library(lubridate)
@@ -64,26 +73,27 @@ dv.dataset = "10.21979/N9/SEGEFM" #dataset linked to this paper
 data.names <- data.frame(
         df.name=c(
                 "data.subj","data.demo","data.spla","data.splc",
-                "data.ffta","data.fftc","data.sv"),
+                "data.ffta","data.fftc","data.sv","trackInfo"),
         filename=c("SPANR_subj_clean.tab","SPANR_demo_clean.tab",
                    "SPANR_SPLdBA_clean.tab","SPANR_SPLdBC_clean.tab",
                    "SPANR_FFTdBA_clean.tab","SPANR_FFTdBC_clean.tab",
-                   "SPANR_sv_clean.tab"))
+                   "SPANR_sv_clean.tab",
+                   "SPANR_soundtrack_information.tab"))
 
 # Empty list to store the data frames
 data.l <- list()
 
+#iteratively retrieve research data from dataverse
 for (name in data.names$df.name) {
+        
         #get dataset from dataverse
         df<-get_dataframe_by_name(filename = data.names[data.names$df.name==name,
                                             "filename"],
                       dataset = dv.dataset, orginal = TRUE,
                       .f = function(x) read.table(x, header = TRUE, 
                                                   sep = "\t", fill = TRUE))
-        
         #assign the data frame to pre-defined name
         assign(name, df)
-        
         #add data frame to list
         data.l[[name]] <- df
 }
@@ -102,9 +112,9 @@ noPart<-length(unique(data.l[["data.subj"]]$ID))
         
 #extract test tracks #1 and #26
 data.trRel<-data.l[["data.subj"]] %>% 
-        filter(NoiseType=="Traffic" & SPL=="60dB") %>%
+        dplyr::filter(NoiseType=="Traffic" & SPL=="60dB") %>%
         #create time column, stimuli #1 & #3 correspond to 1st and 2nd assessments
-        mutate(time=ifelse(row_number()<(noPart+1),1,2))
+        dplyr::mutate(time=ifelse(row_number()<(noPart+1),1,2))
 
 #test-retest reliability between test tracks
 trRel<-psych::testRetest(
@@ -123,12 +133,14 @@ cat("ID number of unreliable responses: ",paste(as.character(IDunRel),collapse =
 
 #Remove data with poor reliability <0.7
 data.subj.rel <- data.l[["data.subj"]] %>% 
-        filter(!ID %in% IDunRel) %>%
+        dplyr::filter(!ID %in% IDunRel) %>%
         dplyr::mutate_at(.vars=c("NoiseType","Masker","SPL","ANC","annoycat"),
                          .funs = as.factor)
 
 #Update demographic
-data.demo.rel <- data.l[["data.demo"]] %>% filter(!ID %in% IDunRel) %>% filter(!ID==1)
+data.demo.rel <- data.l[["data.demo"]] %>% 
+        dplyr::filter(!ID %in% IDunRel) %>% 
+        dplyr::filter(!ID==1)
 
 ```
 
@@ -402,6 +414,225 @@ mean65dB <- data.subj.rel %>%
                   mu.ISOEV=mean(ISOEV))
 
 ```
+
+### ISOPL & ISOEV 3WMANOVA
+
+```{r isoplev3wanova}
+
+#test for normality
+MVN::mvn(data = data.subj.rel %>% 
+                 dplyr::select(c(ISOPL,ISOEV)),
+         mvnTest = "mardia",multivariatePlot = "qq",desc = T)
+
+#three way manova
+ISOPLEV.res.man<-manova(cbind(ISOPL,ISOEV) ~ NoiseType * Masker * ANC, 
+                        data=data.subj.rel %>% filter(SPL=="65dB"))
+
+#convert to manova object to dataframe with broom
+ISOPLEV.man.stat<-tidy(ISOPLEV.res.man) %>%
+        filter(term!="Residuals") %>%
+        dplyr::select(!c("df","pillai","statistic","num.df","den.df"))
+
+#effect size
+ISOPLEV.man.stat.eff<-as.data.frame(effectsize::eta_squared(ISOPLEV.res.man)) %>% 
+                          dplyr::select(c("Parameter","Eta2_partial")) %>% 
+                          `colnames<-`(c("term","Eta2_partial"))
+
+#homogenity of variance assumption
+grouped.data <- data.subj.rel %>% 
+        filter(SPL=="65dB") %>%
+        gather(key = "variable", value = "value", ISOPL, ISOEV) %>%
+  group_by(variable)
+grouped.data %>% rstatix::levene_test(value ~ NoiseType * Masker * ANC)
+
+# #univariate anova
+# ISOPLEV.3Wanova.stat<-as.data.frame(grouped.data %>% rstatix::anova_test(value ~ NoiseType*Masker*ANC,
+#                                      effect.size = "pes")) %>%
+#         dplyr::select(-DFn,-DFd,-`F`) %>%
+#         mutate(across(c("p","pes"),round,4)) %>%
+#         mutate(p=format(p)) %>% #convert to string keeping decimals
+#         unite(`p-value`,c("p","p<.05"),sep = "") %>% #concat
+#         `colnames<-`(c("Variable","Term","p-value","pes"))
+# 
+# #pairwise comparisons with Tukey HSD
+# ISOEV.tukeyHSD.stat<-dataRel %>% filter(SPL=="65dB") %>%
+#          dplyr::select(c(NoiseType,Masker,ISOEV)) %>% #only noise type and masker
+#         rstatix::tukey_hsd(ISOEV ~ NoiseType+Masker) %>%
+#         mutate(p.adj=round(p.adj,4),
+#                Variable="ISOEV") %>%
+#         unite(Term,c("group1","group2"),sep = "--") %>%
+#         mutate(p.adj.signif=ifelse(p.adj.signif=="ns","",p.adj.signif)) %>% #remove ns
+#         mutate(p.adj=format(p.adj)) %>% #convert to string keeping decimals
+#         unite(`p-value`,c("p.adj","p.adj.signif"),sep = "") %>%
+#         dplyr::select(-null.value,-estimate,-conf.low,-conf.high)
+# 
+# ISOPL.tukeyHSD.stat<-dataRel %>% filter(SPL=="65dB") %>%
+#          dplyr::select(c(NoiseType,Masker,ANC,ISOEV)) %>%
+#         rstatix::tukey_hsd(ISOEV ~ NoiseType*Masker+ANC) %>%
+#         mutate(p.adj=round(p.adj,4),
+#                Variable="ISOPL") %>%
+#         filter(term!="NoiseType") %>%
+#         unite(Term,c("group1","group2"),sep = "--") %>%
+#         mutate(p.adj.signif=ifelse(p.adj.signif=="ns","",p.adj.signif)) %>% #remove ns
+#         mutate(p.adj=format(p.adj)) %>% #convert to string keeping decimals
+#         unite(`p-value`,c("p.adj","p.adj.signif"),sep = "") %>%
+#         dplyr::select(-null.value,-estimate,-conf.low,-conf.high)
+
+#Compute ANOVA with pEta2 eff; and posthoc tukey HSD (emmeans+tukey) with cohen's d eff
+ISOPL.anovaPH.stat<-data.subj.rel %>% filter(SPL=="65dB") %>%
+         dplyr::select(c(NoiseType,Masker,ANC,ISOPL)) %>%
+        jmv::ANOVA(formula = ISOPL ~ NoiseType*Masker*ANC,
+                data = ., effectSize = "partEta",
+                #only main eff significant variables
+                postHoc = ~ Masker+ANC+NoiseType:Masker, 
+                   postHocCorr = list("tukey"),
+                postHocES = "d")
+
+ISOEV.anovaPH.stat<-data.subj.rel %>% filter(SPL=="65dB") %>%
+         dplyr::select(c(NoiseType,Masker,ANC,ISOEV)) %>%
+        jmv::ANOVA(formula = ISOEV ~ NoiseType*Masker*ANC,
+                data = ., effectSize = "partEta",
+                #only main eff significant variables
+                postHoc = ~ Masker+NoiseType, 
+                   postHocCorr = list("tukey"),
+                postHocES = "d")
+
+# 3WANOVA main effect statistics
+ISOPLEV.anovaMain.stat<-rbind(as.data.frame(ISOPL.anovaPH.stat$main) %>%
+                                      mutate(Variable="ISOPL"),
+                              as.data.frame(ISOEV.anovaPH.stat$main) %>%
+                                      mutate(Variable="ISOEV")) %>%
+        filter(!name %in% c("Residuals")) %>% #remove not needed
+        dplyr::select(-ss,-df,-ms,-`F`) %>%
+        mutate(across(c("p","etaSqP"),round,4),
+               p=format(p),
+               p=ifelse(as.numeric(p)<0.0001,paste0(p,"****"),
+                        ifelse(as.numeric(p)<0.001,paste0(p,"***"),
+                               ifelse(as.numeric(p)<0.01,paste0(p,"**"),
+                                      ifelse(as.numeric(p)<0.05,
+                                             paste0(p,"*"),p))))) %>%
+        `colnames<-`(c("Term","p-value","Effect","Variable")) %>%
+        `rownames<-`(NULL) %>%
+        mutate(Test="3WANOVA")
+
+#postHoc paired comparisons; Masker, ANC, NoiseType:Masker
+ISOPLEV.anovaPH.stat.pc<-rbind(
+        #ISOPL masker
+        as.data.frame(ISOPL.anovaPH.stat$postHoc[[1]]) %>% 
+        mutate(Term=paste0(Masker1,"--",Masker2),
+               preTerm="Masker",Variable="ISOPL") %>%
+        dplyr::select(!c("Masker1","sep","Masker2")),
+        #ISOPL ANC
+        as.data.frame(ISOPL.anovaPH.stat$postHoc[[2]]) %>% 
+        mutate(Term=paste0(ANC1,"--",ANC2),
+               preTerm="ANC",Variable="ISOPL") %>%
+        dplyr::select(!c("ANC1","sep","ANC2")),
+        #ISOPL NoiseType:Masker
+        as.data.frame(ISOPL.anovaPH.stat$postHoc[[3]]) %>% 
+        mutate(Term=paste0(NoiseType1,",",Masker1,"--"
+                           ,NoiseType2,",",Masker2),
+               preTerm="Noise Type:Masker",Variable="ISOPL") %>%
+        dplyr::select(!c("NoiseType1","NoiseType2","sep","Masker1","Masker2")),
+        #ISOEV NoiseType
+        as.data.frame(ISOEV.anovaPH.stat$postHoc[[2]]) %>% 
+        mutate(Term=paste0(NoiseType1,"--",NoiseType2),
+               preTerm="Noise Type",Variable="ISOEV") %>%
+        dplyr::select(!c("NoiseType1","NoiseType2","sep")),
+        #ISOEV Masker
+        as.data.frame(ISOEV.anovaPH.stat$postHoc[[1]]) %>% 
+        mutate(Term=paste0(Masker1,"--",Masker2),
+               preTerm="Masker",Variable="ISOEV") %>%
+        dplyr::select(!c("Masker1","Masker2","sep"))) %>%
+        dplyr::select(-df,-t) %>%
+        mutate(across(c("ptukey","d","md","se"),round,4),
+               ptukey=format(ptukey),
+               ptukey=ifelse(as.numeric(ptukey)<0.0001,paste0(ptukey,"****"),
+                        ifelse(as.numeric(ptukey)<0.001,paste0(ptukey,"***"),
+                               ifelse(as.numeric(ptukey)<0.01,paste0(ptukey,"**"),
+                                      ifelse(as.numeric(ptukey)<0.05,paste0(ptukey,"*"),ptukey))))) %>%
+        mutate(Test="Tukey HSD") %>%
+        `colnames<-`(c("md","se","p-value","Effect","Term","preTerm","Variable","Test"))
+        
+# #Effect size (Cohen's d) for pairwise comparisons
+# ISOEV.tukeyHSD.stat.eff <- dataRel %>% filter(SPL=="65dB") %>%
+#          dplyr::select(c(NoiseType,Masker,ISOEV)) %>% #only noise type and masker
+#         rstatix::cohens_d(ISOEV ~ NoiseType,paired = T)
+#         effectsize::cohens_d(ISOEV ~ NoiseType|Masker,data=.,paired = T)
+
+#generate table of 3wmanova
+ISOPLEV.man.stat.tbl<-ISOPLEV.man.stat %>% 
+        left_join(.,ISOPLEV.man.stat.eff) %>%
+        mutate(Test="3WMANOVA", Variable="ISOPL:ISOEV") %>%
+        `colnames<-`(c("Term","p-value","Effect","Test","Variable")) %>%
+        mutate(across(c("p-value","Effect"),round,4)) %>%
+        mutate(`p-value`=format(`p-value`),
+                `p-value`=ifelse(as.numeric(`p-value`)<0.0001,
+                                 paste0(`p-value`,"****"),
+                                 ifelse(as.numeric(`p-value`)<0.001,
+                                        paste0(`p-value`,"***"),
+                               ifelse(as.numeric(`p-value`)<0.01,
+                                      paste0(`p-value`,"**"),
+                                      ifelse(as.numeric(`p-value`)<0.05,
+                                             paste0(`p-value`,"*"),`p-value`)))))
+
+#generate combined table with 3WMANOVA, 3WANOVA, Tukey HSD
+ISOPLEV.comb.stat <- rbind(ISOPLEV.man.stat.tbl, 
+                               #ISOPL NoiseType
+                               ISOPLEV.anovaMain.stat[1,],
+                               #ISOPL Masker
+                               ISOPLEV.anovaMain.stat[2,],
+                               #ISOPL Masker PH
+                               ISOPLEV.anovaPH.stat.pc %>%
+                                       filter(Variable=="ISOPL" &
+                                                      preTerm=="Masker") %>%
+                                       dplyr::select(-md,-se,-preTerm),
+                               #ISOPL ANC
+                               ISOPLEV.anovaMain.stat[3,],
+                               #ISOPL Masker PH
+                               ISOPLEV.anovaPH.stat.pc %>%
+                                       filter(Variable=="ISOPL" & preTerm=="ANC") %>%
+                                       dplyr::select(-md,-se,-preTerm),
+                               #ISOPL NoiseType:Masker
+                               ISOPLEV.anovaMain.stat[4,],
+                               #ISOPL NoiseType:Masker PH
+                               ISOPLEV.anovaPH.stat.pc %>%
+                                       filter(Variable=="ISOPL" & preTerm=="Noise Type:Masker") %>%
+                                       dplyr::select(-md,-se,-preTerm),
+                               #ISOPL rest of interaction effects 3WANOVA
+                               #ISOEV Noise Type
+                               ISOPLEV.anovaMain.stat[5:8,],
+                               #ISOEV Noise Type PH
+                               ISOPLEV.anovaPH.stat.pc %>%
+                                       filter(Variable=="ISOEV" & preTerm=="Noise Type") %>%
+                                       dplyr::select(-md,-se,-preTerm),
+                               #ISOEV Masker
+                               ISOPLEV.anovaMain.stat[9,],
+                               #ISOEV Masker PH
+                               ISOPLEV.anovaPH.stat.pc %>%
+                                       filter(Variable=="ISOEV" & preTerm=="Masker") %>%
+                                       dplyr::select(-md,-se,-preTerm),
+                               ISOPLEV.anovaMain.stat[10:14,]) %>%
+        relocate(c("Variable","Term","Test"))
+        
+
+ISOPLEV.comb.stat.tbl <- ISOPLEV.comb.stat %>%
+        `rownames<-`(NULL) %>%
+        kableExtra::kbl(booktabs = T, linesep = "",
+                        #row.names = NULL,
+                        #format = "latex",
+                        format = "html",
+                        label = "PAQANOVAstats",
+                        caption = "Summary of 3WMANOVA, post-hoc univariate 3WANOVA, and relevant post-hoc 
+                        Tukey HSD tests for ISOPL and ISOEV. ") %>%
+        #kable_styling(latex_table_env = "tabularx") %>%
+        kable_paper(full_width = T) %>%
+        collapse_rows(columns = 1, valign = "top") %>%
+        footnote(general = "*:p<0.05, **:p<0.01, ***:p<0.001, ****:p<0.0001") #%>%
+        #save_kable(paste0(getwd(),"/PAQANOVAstats.tex"))
+
+ISOPLEV.comb.stat.tbl
+```
+
 ### dBA
 
 ```{r obj.dBA, message=FALSE}
@@ -409,9 +640,9 @@ mean65dB <- data.subj.rel %>%
 #scatter plots of SPL
 
 #summarise data for dBA plot
-summary.SPL.df <- SPL.dBA.df %>%
+summary.spla.df <- data.l[["data.spla"]] %>%
         group_by(stimuliID,run) %>%
-        summarise(across(-c(time),meandB)) %>% #compute Leq 30s
+        dplyr::summarise(across(-c(time),meandB)) %>% #compute Leq 30s
         #mutate() %>% #loudest ear
         rowwise() %>%
         mutate(#maxHATS=pmax(HATS.L,HATS.R),
@@ -423,22 +654,23 @@ summary.SPL.df <- SPL.dBA.df %>%
         group_by(stimuliID,Measurement) %>%
         mutate(sd=sd(dBA)) %>%
         group_by(stimuliID,Measurement) %>%
-        summarise(across(-c(run),meandB))
+        dplyr::summarise(across(-c(run),meandB))
 
 #noise floor
-print(paste("Noise Floor:",round(summary.SPL.df[2,"dBA"],2),"±",
-            round(summary.SPL.df[2,"sd"],2)))
+print(paste("Noise Floor:",round(summary.spla.df [2,"dBA"],2),"±",
+            round(summary.spla.df [2,"sd"],2)))
 
-summary.SPL.df <- summary.SPL.df %>% filter(!stimuliID==0)
+summary.spla.df <- summary.spla.df %>% filter(!stimuliID==0)
 
 stimuli.trackInfo <- trackInfo[2:nrow(trackInfo),]
 
 #plot SPL dBA as a function of stimuli
-ggplot(summary.SPL.df, aes(x = stimuliID, y = dBA, group=stimuliID, color=Measurement)) +
+ggplot(summary.spla.df, aes(x = stimuliID, 
+                           y = dBA, group=stimuliID, 
+                           color=Measurement)) +
         geom_point() +
         geom_errorbar(aes(ymin=dBA-sd, ymax=dBA+sd), width=.2,
                  position=position_dodge(0.05))
-
 
 ```
 ### Single value objective indicators
@@ -447,57 +679,165 @@ ggplot(summary.SPL.df, aes(x = stimuliID, y = dBA, group=stimuliID, color=Measur
 
 #stimuli names for plotting
 stimuli.trackInfo.names <- trackInfo[2:nrow(trackInfo),] %>%
-        mutate(NoiseType=ifelse(NoiseType=="Train","MRT",
+        dplyr::select(!c("No.")) %>%
+        dplyr::mutate(NoiseType=ifelse(NoiseType=="Train","MRT",
                                 ifelse(NoiseType=="Aircraft","AIR",
                                        ifelse(NoiseType=="Traffic","TRA",NoiseType))),
                Masker=ifelse(Masker=="Bird","B",
                              ifelse(Masker=="Water","W",Masker))) %>%
-        mutate(stimuliID=row_number()) %>%
-        mutate(stimuli.name=case_when(Masker=="None" & ANC == "No" ~ 
-                                              paste0(NoiseType,"@",SPL),
-                                      Masker=="None" & ANC == "Yes" ~ 
-                                              paste0(NoiseType,"*","@",SPL),
-                                      Masker!="None" & ANC == "No" ~ 
-                                              paste0(NoiseType,"@",SPL,"+",Masker),
-                                      Masker!="None" & ANC == "Yes" ~ 
-                                              paste0(NoiseType,"*","@",SPL,"+",Masker)))
+        dplyr::mutate(stimuliID=row_number()) %>%
+        dplyr::mutate(stimuli.name.short=case_when(
+                Masker=="None" & ANC == "No" ~ paste0(NoiseType,"@",SPL),
+                Masker=="None" & ANC == "Yes" ~ paste0(NoiseType,"*@",SPL),
+                Masker!="None" & ANC == "No" ~ paste0(NoiseType,"@",SPL,
+                                                      "+",Masker),
+                Masker!="None" & ANC == "Yes" ~ paste0(NoiseType,"*@",SPL,
+                                                       "+",Masker))) %>%
+        dplyr::mutate(stimuli.name=case_when(
+                Masker=="None" & ANC == "No" ~ paste0(NoiseType,"['",
+                                                      SPL,"(A)']"),
+                Masker=="None" & ANC == "Yes" ~ paste0(NoiseType,"['",
+                                                       SPL, "(A)']^'*'"),
+                Masker!="None" & ANC == "No" ~ paste0(NoiseType,"['",
+                                                      SPL,"(A)']+",Masker),
+                Masker!="None" & ANC == "Yes" ~ paste0(NoiseType,"['",SPL,
+                                                     "(A)']^'*'+",Masker)))
 
-mean.SV <- data.sv %>%
+mean.SV <- data.l[["data.sv"]] %>%
         dplyr::select(!Channel) %>%
         dplyr::filter(!stimuliID==0) %>% #remove noise floor
         group_by(stimuliID,measurement) %>%
         dplyr::summarise(across(everything(),list(mean))) %>%
         ungroup %>%
         `colnames<-`(gsub("_1","",colnames(.))) %>%
+        `colnames<-`(gsub("\\.$",")",colnames(.))) %>%
+        `colnames<-`(gsub("\\.","(",colnames(.))) %>%
         pivot_longer(cols = !c("stimuliID","measurement"), 
                      names_to = "Indicator",values_to = "Value") %>%
-        pivot_wider(names_from = stimuliID,values_from = Value) %>%
-        `colnames<-`(cbind(c("measurement","indicator",stimuli.trackInfo.names$stimuli.name)))
+        #add stimuli details by merging
+        left_join(.,stimuli.trackInfo.names, by="stimuliID") %>%
+        dplyr::select(!c("NoiseType","Masker","ANC","SPL",
+                         "stimuliID","stimuli.name.short")) %>%
+        pivot_wider(names_from = stimuli.name, values_from = Value) %>%
+        `colnames<-`(cbind(c("measurement","indicator",
+                             stimuli.trackInfo.names$stimuli.name.short)))
 
 ```
-### SV Attenuation
+### dB Attenuation
 
 ```{r}
-
+#compute difference before and after intervention only for dBA and dBC
 mean.SV.att <- mean.SV %>%
-        filter(grepl("(C)|(A)", indicator)) %>%
+        dplyr::filter(grepl("(C)|(A)", indicator)) %>%
         #compute attenuation
-        mutate(`AIR@65dB`=`AIR@65dB`-`AIR*@65dB`,`MRT@65dB`=`MRT@65dB`-`MRT*@65dB`,
-               `TRA@65dB`=`TRA@65dB`-`TRA*@65dB`,`AIR@70dB`=`AIR@70dB`-`AIR*@70dB`,
-               `MRT@70dB`=`MRT@70dB`-`MRT*@70dB`,`TRA@70dB`=`TRA@70dB`-`TRA*@70dB`,
-               `AIR@65dB+B`=`AIR@65dB+B`-`AIR*@65dB+B`,
-               `MRT@65dB+B`=`MRT@65dB+B`-`MRT*@65dB+B`,
-               `TRA@65dB+B`=`TRA@65dB+B`-`TRA*@65dB+B`,
-               `AIR@65dB+W`=`AIR@65dB+W`-`AIR*@65dB+W`,
-               `MRT@65dB+W`=`MRT@65dB+W`-`MRT*@65dB+W`,
-               `TRA@65dB+W`=`TRA@65dB+W`-`TRA*@65dB+W`) %>%
+        dplyr::mutate(`AIR@65dB`=`AIR@65dB`-`AIR*@65dB`,
+                      `MRT@65dB`=`MRT@65dB`-`MRT*@65dB`,
+                      `TRA@65dB`=`TRA@65dB`-`TRA*@65dB`,
+                      `AIR@70dB`=`AIR@70dB`-`AIR*@70dB`,
+                      `MRT@70dB`=`MRT@70dB`-`MRT*@70dB`,
+                      `TRA@70dB`=`TRA@70dB`-`TRA*@70dB`,
+                      `AIR@65dB+B`=`AIR@65dB+B`-`AIR*@65dB+B`,
+                      `MRT@65dB+B`=`MRT@65dB+B`-`MRT*@65dB+B`,
+                      `TRA@65dB+B`=`TRA@65dB+B`-`TRA*@65dB+B`,
+                      `AIR@65dB+W`=`AIR@65dB+W`-`AIR*@65dB+W`,
+                      `MRT@65dB+W`=`MRT@65dB+W`-`MRT*@65dB+W`,
+                      `TRA@65dB+W`=`TRA@65dB+W`-`TRA*@65dB+W`) %>%
         dplyr::select(!matches("\\*|60")) %>%
-        mutate(weight=ifelse(grepl("(C)",indicator),"C","A")) %>%
+        dplyr::mutate(weight=ifelse(grepl("(C)",indicator),"C","A")) %>%
         group_by(measurement,weight) %>%
         dplyr::summarise_all(list(mean=mean,sd=sd))
-        
-        
 
+#generate table of attenuation scores
+table.sv.att<- mean.SV %>%
+        `colnames<-`(cbind(c("measurement","indicator",
+                             stimuli.trackInfo.names$stimuli.name))) %>%
+        pivot_longer(names_to = "stimuli.name",values_to = "value",
+                     cols = -c(1,2)) %>%
+        pivot_wider(names_from = indicator, values_from = value) %>%
+        dplyr::mutate(
+                PA=ifelse(S>1.75,
+                          N5*(1+sqrt(((S-1.75)*0.25*log10(N5+10))^2+
+                                             ((2.18/N5^0.4)*(0.4*Fluc95+0.6*R))^2)),
+                         N5*(1+sqrt(((2.18/N5^0.4)*(0.4*Fluc95+0.6*R))^2))),
+               `L10(A)-L90(A)`=`L10(A)`-`L90(A)`,
+               `L(C)-L(A)`=`L10(C)`-`L(A)`) %>%
+        #dplyr::select(!c(1,3:6)) %>%
+        pivot_longer(cols = !c(1,2),
+                     names_to = "Parameters", values_to = "Value") %>%
+        pivot_wider(names_from = c("measurement","stimuli.name"),
+                    values_from = Value) %>%
+        dplyr::mutate(HATS_AIR65dBA.B0=`HATS_AIR['65dB(A)']`-`HATS_AIR['65dB(A)']+B`,
+               HATS_AIR65dBA.W0=`HATS_AIR['65dB(A)']`-`HATS_AIR['65dB(A)']+W`,
+               HATS_AIR65dBA=`HATS_AIR['65dB(A)']`-`HATS_AIR['65dB(A)']^'*'`,
+               HATS_AIR65dBA.B=`HATS_AIR['65dB(A)']`-`HATS_AIR['65dB(A)']^'*'+B`,
+               HATS_AIR65dBA.W=`HATS_AIR['65dB(A)']`-`HATS_AIR['65dB(A)']^'*'+W`,
+               HATS_AIR70dBA=`HATS_AIR['70dB(A)']`-`HATS_AIR['70dB(A)']^'*'`,
+               
+               HATS_MRT65dBA.B0=`HATS_MRT['65dB(A)']`-`HATS_MRT['65dB(A)']+B`,
+               HATS_MRT65dBA.W0=`HATS_MRT['65dB(A)']`-`HATS_MRT['65dB(A)']+W`,
+               HATS_MRT65dBA=`HATS_MRT['65dB(A)']`-`HATS_MRT['65dB(A)']^'*'`,
+               HATS_MRT65dBA.B=`HATS_MRT['65dB(A)']`-`HATS_MRT['65dB(A)']^'*'+B`,
+               HATS_MRT65dBA.W=`HATS_MRT['65dB(A)']`-`HATS_MRT['65dB(A)']^'*'+W`,
+               HATS_MRT70dBA=`HATS_MRT['70dB(A)']`-`HATS_MRT['70dB(A)']^'*'`,
+               
+               HATS_TRA65dBA.B0=`HATS_TRA['65dB(A)']`-`HATS_TRA['65dB(A)']+B`,
+               HATS_TRA65dBA.W0=`HATS_TRA['65dB(A)']`-`HATS_TRA['65dB(A)']+W`,
+               HATS_TRA65dBA=`HATS_TRA['65dB(A)']`-`HATS_TRA['65dB(A)']^'*'`,
+               HATS_TRA65dBA.B=`HATS_TRA['65dB(A)']`-`HATS_TRA['65dB(A)']^'*'+B`,
+               HATS_TRA65dBA.W=`HATS_TRA['65dB(A)']`-`HATS_TRA['65dB(A)']^'*'+W`,
+               HATS_TRA70dBA=`HATS_TRA['70dB(A)']`-`HATS_TRA['70dB(A)']^'*'`,
+               
+               EA_AIR65dBA.B0=`EA_AIR['65dB(A)']`-`EA_AIR['65dB(A)']+B`,
+               EA_AIR65dBA.W0=`EA_AIR['65dB(A)']`-`EA_AIR['65dB(A)']+W`,
+               EA_AIR65dBA=`EA_AIR['65dB(A)']`-`EA_AIR['65dB(A)']^'*'`,
+               EA_AIR65dBA.B=`EA_AIR['65dB(A)']`-`EA_AIR['65dB(A)']^'*'+B`,
+               EA_AIR65dBA.W=`EA_AIR['65dB(A)']`-`EA_AIR['65dB(A)']^'*'+W`,
+               EA_AIR70dBA=`EA_AIR['70dB(A)']`-`EA_AIR['70dB(A)']^'*'`,
+               
+               EA_MRT65dBA.B0=`EA_MRT['65dB(A)']`-`EA_MRT['65dB(A)']+B`,
+               EA_MRT65dBA.W0=`EA_MRT['65dB(A)']`-`EA_MRT['65dB(A)']+W`,
+               EA_MRT65dBA=`EA_MRT['65dB(A)']`-`EA_MRT['65dB(A)']^'*'`,
+               EA_MRT65dBA.B=`EA_MRT['65dB(A)']`-`EA_MRT['65dB(A)']^'*'+B`,
+               EA_MRT65dBA.W=`EA_MRT['65dB(A)']`-`EA_MRT['65dB(A)']^'*'+W`,
+               EA_MRT70dBA=`EA_MRT['70dB(A)']`-`EA_MRT['70dB(A)']^'*'`,
+               
+               EA_TRA65dBA.B0=`EA_TRA['65dB(A)']`-`EA_TRA['65dB(A)']+B`,
+               EA_TRA65dBA.W0=`EA_TRA['65dB(A)']`-`EA_TRA['65dB(A)']+W`,
+               EA_TRA65dBA=`EA_TRA['65dB(A)']`-`EA_TRA['65dB(A)']^'*'`,
+               EA_TRA65dBA.B=`EA_TRA['65dB(A)']`-`EA_TRA['65dB(A)']^'*'+B`,
+               EA_TRA65dBA.W=`EA_TRA['65dB(A)']`-`EA_TRA['65dB(A)']^'*'+W`,
+               EA_TRA70dBA=`EA_TRA['70dB(A)']`-`EA_TRA['70dB(A)']^'*'`) %>%
+        dplyr::select(!c(2:51)) %>%
+        dplyr::mutate(across(!1, round, 2)) %>%
+        kableExtra::kbl(booktabs = T, linesep = "",
+                        #format = "latex",
+                        format = "html",
+                        label = "attHATSEA_SV",
+                        caption = "Difference between mean acoustic and 
+                        psychoacoustic indices before and after intervention, 
+                        across both KEMAR HATS and energetic average measurements") %>%
+        #kable_styling(latex_table_env = "tabularx") %>%
+        kable_paper(full_width = T) %>%
+        add_header_above(c(" ", "65dB(A)" = 5, "70dB(A)" = 1, 
+                           "65dB(A)" = 5, "70dB(A)" = 1, 
+                           "65dB(A)" = 5, "70dB(A)" = 1, 
+                           "65dB(A)" = 5, "70dB(A)" = 1, 
+                           "65dB(A)" = 5, "70dB(A)" = 1, 
+                           "65dB(A)" = 5, "70dB(A)" = 1), bold = T) %>%
+        add_header_above(c(" ", "ANC:NO" = 2, "ANC:YES" = 4, 
+                           "ANC:NO" = 2, "ANC:YES" = 4, 
+                           "ANC:NO" = 2, "ANC:YES" = 4, 
+                           "ANC:NO" = 2, "ANC:YES" = 4, 
+                           "ANC:NO" = 2, "ANC:YES" = 4, 
+                           "ANC:NO" = 2, "ANC:YES" = 4), bold = T) %>%
+        add_header_above(c(" ", "Aircraft" = 6, "MRT" = 6, "Traffic" = 6, 
+                           "Aircraft" = 6, "MRT" = 6, "Traffic" = 6),
+                         bold = T) %>%
+        add_header_above(c(" ", "HATS" = 18, 
+                           "Energetic Average" = 18), bold = T) #%>%
+        #save_kable(paste0(getwd(),"/diffHATSEV_SV.tex"))
+
+table.sv.att
 ```
 
 
@@ -509,7 +849,7 @@ mean.SV.att <- mean.SV %>%
 set1clr<-brewer.pal(n = 9,"Set1")
 
 #mean across runs and EA/HATS channels
-summary.FFT.dBA.df <- FFT.dBA.df %>%
+summary.FFT.dBA.df <- data.l[["data.ffta"]] %>%
         #mean across runs
         group_by(freq,stimuliID) %>%
         dplyr::summarise(across(-c(run),list(meandB))) %>%
@@ -524,7 +864,7 @@ summary.FFT.dBA.df <- FFT.dBA.df %>%
         left_join(.,stimuli.trackInfo.names,by="stimuliID") %>%
         pivot_longer(cols = c(EA,HATS),names_to = "measurement",values_to = "dBA")
         
-g.65dB<-ggplot(data = summary.FFT.df %>% 
+g.65dBA<-ggplot(data = summary.FFT.dBA.df %>% 
                mutate(stimuliID=as.factor(stimuliID)) %>%
                filter(SPL=="65dB"), 
        aes(x = freq,y = dBA,color=Masker)) +
@@ -536,9 +876,9 @@ g.65dB<-ggplot(data = summary.FFT.df %>%
         ylim(20,50) + xlab("Frequency, Hz") + 
         scale_color_manual(values = set1clr) +
         ylab ("Sound Pressure Level, dB(A)") + theme(legend.position="bottom")
-g.65dB
+g.65dBA
 
-ggsave("65dBA_HATS.pdf",plot = g.65dB, width = 1800, height = 1500, units = "px",scale = 1)
+ggsave("./outputs/65dBA_HATS.pdf",plot = g.65dBA, width = 1800, height = 1500, units = "px",scale = 1)
 
 #70 dBA only HATS
 g.70dBA<-ggplot(data = summary.FFT.dBA.df %>% 
@@ -554,7 +894,7 @@ g.70dBA<-ggplot(data = summary.FFT.dBA.df %>%
         annotation_logticks(sides="b") +
         theme(legend.position="none",panel.grid.minor = element_blank())
 g.70dBA
-ggsave("70dBA_HATS.pdf",plot = g.70dBA, width = 900, height = 1500, units = "px",scale = 1)
+ggsave("./outputs/70dBA_HATS.pdf",plot = g.70dBA, width = 900, height = 1500, units = "px",scale = 1)
 ```
 
 ### FFT (dBC)
@@ -565,7 +905,7 @@ ggsave("70dBA_HATS.pdf",plot = g.70dBA, width = 900, height = 1500, units = "px"
 set1clr<-brewer.pal(n = 9,"Set1")
 
 #mean across runs and EA/HATS channels
-summary.FFT.dBC.df <- FFT.dBC.df %>%
+summary.FFT.dBC.df <- data.l[["data.fftc"]] %>%
         #mean across runs
         group_by(freq,stimuliID) %>%
         dplyr::summarise(across(-c(run),list(meandB))) %>%
@@ -594,7 +934,7 @@ g.65dBC<-ggplot(data = summary.FFT.dBC.df %>%
         ylab ("Sound Pressure Level, dB(C)") + theme(legend.position="bottom")
 g.65dBC
 
-ggsave("65dBC_HATS.pdf",plot = g.65dBC, width = 1800, height = 1500, units = "px",scale = 1)
+ggsave("./outputs/65dBC_HATS.pdf",plot = g.65dBC, width = 1800, height = 1500, units = "px",scale = 1)
 
 #70 dBA only HATS
 g.70dBC<-ggplot(data = summary.FFT.dBC.df %>% 
@@ -610,7 +950,7 @@ g.70dBC<-ggplot(data = summary.FFT.dBC.df %>%
         annotation_logticks(sides="b") +
         theme(legend.position="none",panel.grid.minor = element_blank())
 g.70dBC
-ggsave("70dBC_HATS.pdf",plot = g.70dBC, width = 900, height = 1500, units = "px",scale = 1)
+ggsave("./outputs/70dBC_HATS.pdf",plot = g.70dBC, width = 900, height = 1500, units = "px",scale = 1)
 
 #create combined plot of 70dBA and 70dBC
 
@@ -643,7 +983,7 @@ shared_legend <- extract_legend(g.70dBC_legend)
 g.comb.70dB<-grid.arrange(arrangeGrob(g.70dBA, g.70dBC, ncol = 2),
              shared_legend, nrow = 2, heights = c(20, 1))
 
-ggsave("70dB_HATS_comb.pdf",plot = g.comb.70dB, width = 1800, height = 1500, units = "px",scale = 1)
+ggsave("./outputs/70dB_HATS_comb.pdf",plot = g.comb.70dB, width = 1800, height = 1500, units = "px",scale = 1)
 
 ```
 
