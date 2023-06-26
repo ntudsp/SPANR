@@ -1018,3 +1018,104 @@ g.2Dden.traffic.marg<-ggMarginal(g.2Dden.traffic,groupColour = T,groupFill = T)
 g.2Dden.traffic.marg
 ggsave("./outputs/2DISO_Traffic.pdf",plot = g.2Dden.traffic.marg, width = 2000, height = 1700, units = "px",scale = 1)
 ```
+
+
+## Annoyance
+
+### Degree of agreement
+
+```{r}
+
+#65 dB stimuli only
+data.annoy<-data.subj.rel %>%
+        dplyr::select(1:5,c("annoycat","annoyscale","annoying")) %>%
+        #dplyr::filter(SPL=="65dB") %>%
+        mutate(Masker=ifelse(Masker=="Bird","B",
+                             ifelse(Masker=="Water","W",as.character(Masker))),
+               NoiseType=ifelse(NoiseType=="Aircraft","AIR",
+                                ifelse(NoiseType=="Train","MRT","TRA"))) 
+
+n.stimuliID<-length(unique(data.annoy$ID))
+
+#t-distribution at 95% Conf Lvl
+td<-qt(0.975,df=n.stimuliID-1)
+
+data.annoy.BA<- data.annoy %>%        
+        #upscale categorical scale to 0 t0 100
+        dplyr::mutate(NoiseType=factor(NoiseType, levels=c("AIR","MRT","TRA")),
+               Masker=factor(Masker, levels = c("None","W","B")),
+                annoycat=factor(annoycat, 
+                                  levels=c("Not At All","Slightly","Moderately",
+                                           "Very","Extremely")),
+               annoycatInt=(as.numeric(annoycat)-1)*25) %>%
+        #compute average and difference
+        dplyr::mutate(annoyMean=rowMeans(dplyr::select(.,c("annoycatInt","annoyscale")),na.rm = T),
+               annoyDiff=annoycatInt-annoyscale) %>%
+        group_by(SPL,NoiseType,Masker,ANC) %>%
+        #mean of differences
+        dplyr::mutate(m.annoyDiff=mean(annoyDiff,na.rm = T), 
+               #lwr bound for mean
+               m.lwr.annoyDiff=m.annoyDiff-
+                       td*sd(annoyDiff,na.rm = T)/sqrt(n.stimuliID), 
+               #upr bound for mean
+               m.upr.annoyDiff=m.annoyDiff+
+                       td*sd(annoyDiff,na.rm = T)/sqrt(n.stimuliID)) %>%
+        #lower limits of agreement (LoA)
+        dplyr::mutate(lwr.annoyDiff=m.annoyDiff-1.96*sd(annoyDiff,na.rm = T),
+               lwr.lwr.annoyDiff=lwr.annoyDiff-
+                       td*sqrt((1/n.stimuliID + 3.8416/(2*(n.stimuliID-1)))),
+               lwr.upr.annoyDiff=lwr.annoyDiff+
+                       td*sqrt((1/n.stimuliID + 3.8416/(2*(n.stimuliID-1))))) %>%
+        #upper limits of agreement (LoA)
+        dplyr::mutate(upr.annoyDiff=m.annoyDiff+1.96*sd(annoyDiff,na.rm = T),
+               upr.lwr.annoyDiff=upr.annoyDiff-
+                       td*sqrt((1/n.stimuliID + 3.8416/(2*(n.stimuliID-1)))),
+               upr.upr.annoyDiff=upr.annoyDiff+
+                       td*sqrt((1/n.stimuliID + 3.8416/(2*(n.stimuliID-1))))) %>%
+        dplyr::arrange(SPL,NoiseType,Masker,ANC,by_groups=TRUE)
+
+#Bland-altman between annoyscale and annoycat 0 to 100
+
+geom.text.size<-4
+theme.size<-16
+geom.point.size<-4
+
+g.BA.65dB<-baplotOpts(data = data.annoy.BA %>% filter(SPL=="65dB"),
+           X = annoyMean, Y = annoyDiff, color = Masker,
+           fg.XY = as.formula(NoiseType~Masker+ANC), np = seq( from=1 , to=18*40 , by=40),
+           #hline for mean diff, upper LoA, lower LoA
+           hl.mean=m.annoyDiff, hl.upper=upr.annoyDiff, hl.lower=lwr.annoyDiff,
+           #lower/upper 95% limits of lwr/upr LoA & mean
+           lwr.ymin=lwr.lwr.annoyDiff,lwr.ymax=lwr.upr.annoyDiff,
+           upr.ymin=upr.lwr.annoyDiff,upr.ymax=upr.upr.annoyDiff,
+           m.ymin=m.lwr.annoyDiff,m.ymax=m.upr.annoyDiff,
+           geom.text.size,theme.size,geom.point.size,colorl=cols25(),
+           xlim.low=0,xlim.upp=100,ylim.low=-80,ylim.upp=70,
+           ylabel="Difference between verbal and \n numeric annoyance scales at 65 dB(A)",
+           xlabel=paste("Arithemic mean between methods at 65 dB(A)"))
+ggsave("./outputs/BAPlot_65dB.pdf",
+       plot = g.BA.65dB, width = 1800, height = 1000, units = "px",scale = 2)
+
+#70 dB and 60 dB
+
+g.BA.OtherdB<-baplotOpts(data = data.annoy.BA %>% ungroup %>% 
+                                 filter(SPL!="65dB") %>%
+                                 group_by(NoiseType,SPL,ANC) %>%
+                                 arrange(NoiseType,SPL,ANC,by_group=T),
+           X = annoyMean, Y = annoyDiff, color = NoiseType,
+           fg.XY = as.formula(~SPL+NoiseType+ANC), np = seq(from=1 , to=8*40 , by=40),
+           #hline for mean diff, upper LoA, lower LoA
+           hl.mean=m.annoyDiff, hl.upper=upr.annoyDiff, hl.lower=lwr.annoyDiff,
+           #lower/upper 95% limits of lwr/upr LoA & mean
+           lwr.ymin=lwr.lwr.annoyDiff,lwr.ymax=lwr.upr.annoyDiff,
+           upr.ymin=upr.lwr.annoyDiff,upr.ymax=upr.upr.annoyDiff,
+           m.ymin=m.lwr.annoyDiff,m.ymax=m.upr.annoyDiff,
+           geom.text.size,theme.size,geom.point.size,colorl=cols25(),
+           xlim.low=0,xlim.upp=100,ylim.low=-70,ylim.upp=70,
+           ylabel="Difference between verbal and \n numeric annoyance scales at 60 & 70 dB(A)",
+           xlabel=paste("Arithemic mean between methods at 60 & 70 dB(A)"))
+ggsave("./outputs/BAPlot_OtherdB.pdf",
+       plot = g.BA.OtherdB, width = 1800, height = 700, units = "px",scale = 2)
+
+
+```
