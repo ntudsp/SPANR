@@ -6,6 +6,17 @@ output: github_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(dataverse)
+library(tidyverse)
+
+#statistical packages
+library(psych)
+library(ARTool)
+library(RTHORR)
+library(lsr)
+
+#formatting
+library(kableExtra)
+
 library(raster)
 library(lubridate)
 library(rjson)
@@ -33,7 +44,15 @@ source("spanrFunc.R")
 
 ## Data loading
 
-Load research data from data repository
+Load research data from dataverse data repository (https://doi.org/10.21979/N9/SEGEFM) into dataframes then consolidate them into a list data.l
+1. data.subj: subjective response data from 44 participants
+2. data.demo: demographic and pre-test assessment responses from 44 particiapnts
+3. data.spla: A-weighted equivalent sound pressure level ($L_{Aeq}$) vs time of all stimuli at 6 measurement microphone positions and binaural channels from the HATS
+4. data.splc: $L_{Ceq}$ vs time of all stimuli at 6 measurement microphone positions and binaural channels from the HATS
+5. data.ffta: Frequency domain plots in $L_{Aeq}$ of of all stimuli at 6 measurement microphone positions and binaural channels from the HATS
+6. data.fftc: Frequency domain plots in $L_{Ceq}$ of of all stimuli at 6 measurement microphone positions and binaural channels from the HATS
+7. data,sv: Single value psychoacoustic and acoustic parameter data (see Table 1 in the paper) at 6 measurement microphone positions and binaural channels from the HATS
+
 
 ```{r dataload}
 #Set dataverse server
@@ -72,47 +91,57 @@ for (name in data.names$df.name) {
 ```
 
 
-## Data exploration and summary statistics
+## Reliability check
+
+Examine the within-subject test-retest reliability of the subjective response data between stimuli #1 and #26
 
 ```{r explr, message=FALSE}
 
-#no of participants
-noPart<-44
-
+#no of participants from subjective response data
+noPart<-length(unique(data.l[["data.subj"]]$ID))
+        
 #extract test tracks #1 and #26
-part3<-data %>% 
+data.trRel<-data.l[["data.subj"]] %>% 
         filter(NoiseType=="Traffic" & SPL=="60dB") %>%
-        mutate(time=ifelse(row_number()<(noPart+1),1,2)) #create time column
+        #create time column, stimuli #1 & #3 correspond to 1st and 2nd assessments
+        mutate(time=ifelse(row_number()<(noPart+1),1,2))
 
 #test-retest reliability between test tracks
-testRT<-psych::testRetest(as.data.frame(part3),
-                  select = c("annoyscale","loudness","pleasant","annoying",
-                             "eventful","uneventful","vibrant","chaotic",
-                             "monotonous","calm"))
+trRel<-psych::testRetest(
+        as.data.frame(data.trRel),
+        select = c("annoyscale","loudness","pleasant","annoying",
+                   "eventful","uneventful","vibrant","chaotic",
+                   "monotonous","calm"))
+
 #within person reliability
-WPrelia<-testRT$scores$rqq 
+wPRel<-trRel$scores$rqq 
 
 #ID of unreliable
-IDunRel<-data$ID[which(WPrelia<0.7)][]
+IDunRel<-data.l[["data.subj"]]$ID[which(wPRel<0.7)][]
+
+cat("ID number of unreliable responses: ",paste(as.character(IDunRel),collapse = ", "))
 
 #Remove data with poor reliability <0.7
-dataRel <- data %>% filter(!ID %in% IDunRel)
+data.subj.rel <- data.l[["data.subj"]] %>% 
+        filter(!ID %in% IDunRel) %>%
+        dplyr::mutate_at(.vars=c("NoiseType","Masker","SPL","ANC","annoycat"),
+                         .funs = as.factor)
 
 #Update demographic
-demoRel <- allDemo %>% filter(!ID %in% IDunRel) %>% filter(!ID==1)
+data.demo.rel <- data.l[["data.demo"]] %>% filter(!ID %in% IDunRel) %>% filter(!ID==1)
 
 ```
 
 ## Circumplexity analysis
 
-The circumplexity of the PAQ attributes are evaluated via the randomized test of hypothesized order relations (RTHOR) and sinusoidality.  The correspondence index (CI) indicates an 86% circumplexity fit (p<0.001).
+The circumplexity of the PAQ attributes are evaluated via the randomized test of hypothesized order relations (RTHOR) and sinusoidality. The correspondence index (CI) indicates an 86% circumplexity fit (p<0.001).
 
 ```{r circum, message=FALSE}
 
 #Check for circumplexity using RTHORR
 
 #Pearson's correlation
-cor.PAQ <- cor(dataRel %>% dplyr::select(eventful:chaotic),method = "pearson")
+cor.PAQ <- cor(data.subj.rel %>% dplyr::select(eventful:chaotic),method = "pearson")
 
 #RTHOR
 randmf_output <- RTHORR::randmf_from_df(
@@ -121,143 +150,252 @@ randmf_output <- RTHORR::randmf_from_df(
 paste0("Circumplexity fit: ",round(randmf_output$RTHOR$CI[1]*100,2),"%")
 
 #PCA
-pca.PAQ<-principal(dataRel %>% dplyr::select(eventful:chaotic), nfactors = 2,rotate = "none")
+pca.PAQ<-principal(data.subj.rel %>% 
+                           dplyr::select(eventful:chaotic),
+                   nfactors = 2,rotate = "none")
 
-pca.PAQ$loadings
+#as.data.frame.matrix(pca.PAQ$loadings)
 
-#Inequality check
-##Adjacent v 1 hop
-c(cor.PAQ[1,2],cor.PAQ[2,3],cor.PAQ[3,4],cor.PAQ[4,5],
-  cor.PAQ[5,6],  cor.PAQ[6,7],cor.PAQ[7,8])>c(cor.PAQ[1,3])
-
-c(cor.PAQ[1,2],cor.PAQ[2,3],cor.PAQ[3,4],cor.PAQ[4,5],
-  cor.PAQ[5,6],  cor.PAQ[6,7],cor.PAQ[7,8])>c(cor.PAQ[2,4])
-
-c(cor.PAQ[1,2],cor.PAQ[2,3],cor.PAQ[3,4],cor.PAQ[4,5],
-  cor.PAQ[5,6],  cor.PAQ[6,7],cor.PAQ[7,8])>c(cor.PAQ[3,5])
-
-c(cor.PAQ[1,2],cor.PAQ[2,3],cor.PAQ[3,4],cor.PAQ[4,5],
-  cor.PAQ[5,6],  cor.PAQ[6,7],cor.PAQ[7,8])>c(cor.PAQ[4,6])
-
-c(cor.PAQ[1,2],cor.PAQ[2,3],cor.PAQ[3,4],cor.PAQ[4,5],
-  cor.PAQ[5,6],  cor.PAQ[6,7],cor.PAQ[7,8])>c(cor.PAQ[5,7])
-
-c(cor.PAQ[1,2],cor.PAQ[2,3],cor.PAQ[3,4],cor.PAQ[4,5],
-  cor.PAQ[5,6],  cor.PAQ[6,7],cor.PAQ[7,8])>c(cor.PAQ[6,8])
-
-##1hop vs 2hop
-c(cor.PAQ[1,3],cor.PAQ[2,4],cor.PAQ[3,5],cor.PAQ[4,6],
-  cor.PAQ[5,7],  cor.PAQ[6,8])>c(cor.PAQ[1,4])
-
-c(cor.PAQ[1,3],cor.PAQ[2,4],cor.PAQ[3,5],cor.PAQ[4,6],
-  cor.PAQ[5,7],  cor.PAQ[6,8])>c(cor.PAQ[2,5])
-
-c(cor.PAQ[1,3],cor.PAQ[2,4],cor.PAQ[3,5],cor.PAQ[4,6],
-  cor.PAQ[5,7],  cor.PAQ[6,8])>c(cor.PAQ[3,6])
-
-c(cor.PAQ[1,3],cor.PAQ[2,4],cor.PAQ[3,5],cor.PAQ[4,6],
-  cor.PAQ[5,7],  cor.PAQ[6,8])>c(cor.PAQ[4,7])
-
-c(cor.PAQ[1,3],cor.PAQ[2,4],cor.PAQ[3,5],cor.PAQ[4,6],
-  cor.PAQ[5,7],  cor.PAQ[6,8])>c(cor.PAQ[5,8])
-
-##2hop vs 3hop
-c(cor.PAQ[1,4],cor.PAQ[2,5],cor.PAQ[3,6],cor.PAQ[4,7],
-  cor.PAQ[5,8])>c(cor.PAQ[1,5])
-
-c(cor.PAQ[1,4],cor.PAQ[2,5],cor.PAQ[3,6],cor.PAQ[4,7],
-  cor.PAQ[5,8])>c(cor.PAQ[2,6])
-
-c(cor.PAQ[1,4],cor.PAQ[2,5],cor.PAQ[3,6],cor.PAQ[4,7],
-  cor.PAQ[5,8])>c(cor.PAQ[3,7])
-
-c(cor.PAQ[1,4],cor.PAQ[2,5],cor.PAQ[3,6],cor.PAQ[4,7],
-  cor.PAQ[5,8])>c(cor.PAQ[4,8])
+#Generate latex table
+cor.PAQ %>%
+        cbind(.,as.data.frame.matrix(pca.PAQ$loadings)) %>%
+        mutate(across(1:10, round, 2)) %>%
+        as.data.frame(.) %>%
+        mutate(vibrant=replace(vibrant, eventful==1.00, "$P_1$"),
+               pleasant=replace(pleasant,vibrant==1.00, "$P_1$"),
+               pleasant=replace(pleasant,eventful==1.00, "$P_2$"),
+               calm=replace(calm,eventful==1.00, "$P_3$"),
+               calm=replace(calm,vibrant==1.00, "$P_2$"),
+               calm=replace(calm,pleasant==1.00, "$P_1$"),
+               uneventful=replace(uneventful,eventful==1.00, "$P_4$"),
+               uneventful=replace(uneventful,vibrant==1.00, "$P_3$"),
+               uneventful=replace(uneventful,pleasant==1.00, "$P_2$"),
+               uneventful=replace(uneventful,calm==1.00, "$P_1$"),
+               monotonous=replace(monotonous,eventful==1.00, "$P_3$"),
+               monotonous=replace(monotonous,vibrant==1.00, "$P_4$"),
+               monotonous=replace(monotonous,pleasant==1.00, "$P_3$"),
+               monotonous=replace(monotonous,calm==1.00, "$P_2$"),
+               monotonous=replace(monotonous,uneventful==1.00, "$P_1$"),
+               annoying=replace(annoying,eventful==1.00, "$P_2$"),
+               annoying=replace(annoying,vibrant==1.00, "$P_3$"),
+               annoying=replace(annoying,pleasant==1.00, "$P_4$"),
+               annoying=replace(annoying,calm==1.00, "$P_3$"),
+               annoying=replace(annoying,uneventful==1.00, "$P_2$"),
+               annoying=replace(annoying,monotonous==1.00, "$P_1$"),
+               chaotic=replace(chaotic,eventful==1.00, "$P_1$"),
+               chaotic=replace(chaotic,vibrant==1.00, "$P_2$"),
+               chaotic=replace(chaotic,pleasant==1.00, "$P_3$"),
+               chaotic=replace(chaotic,calm==1.00, "$P_4$"),
+               chaotic=replace(chaotic,uneventful==1.00, "$P_3$"),
+               chaotic=replace(chaotic,monotonous==1.00, "$P_2$"),
+               chaotic=replace(chaotic,annoying==1.00, "$P_1$"))%>%
+        kableExtra::kbl(booktabs = T, linesep = "",
+                        format = "html",
+                        label = "corPCA",
+                        caption = "Pearson's correlation and principal component
+                        analysis loadings of PAQ attributes") %>%
+        #kable_styling(latex_table_env = "tabularx") %>%
+        kable_paper(full_width = T) %>%
+        add_header_above(c(" ", "Pearson's Correlation" = 8, 
+                           "Loadings" = 2), bold = T) #%>%
+        #save_kable(paste0(getwd(),"/corPCA.tex"))
 
 ```
-
-
 
 ## Three way anova analysis
 
+### Loudness (traffic, aircraft, MRT)
 
-### Loudness
+- normality test
+- non-normal -> ART ANOVA
 
-```{r anova, echo=FALSE}
-##65 dB: Effect of masker, noise type, anc
-#three-way anova
-loudness65dBModel <- aov(loudness ~ NoiseType * Masker * ANC, data=dataRel %>% filter(SPL=="65dB"))
-summary(loudnessModel)
-#remove 3 way interaction
-loudness65dBModel1 <- update(loudnessModel, . ~ . -NoiseType:Masker:ANC)
-summary(loudnessModel1)
-#remove 2 way interaction
-loudness65dBModel2 <- update(loudnessModel1,  .~NoiseType+Masker+ANC)
-summary(loudnessModel2)
-
-#paired comparisons
-pcLoudness65dB<-TukeyHSD(loudnessModel2)
-
-#mean scores
-meanLoudness65dB <- dataRel %>%
-        filter(SPL=="65dB") %>%
-        group_by(NoiseType, Masker, ANC) %>%
-        summarize(mean_loud=mean(loudness),sd_loud=sd(loudness))
-
-
-##Effect of ANC both 65 dBA and 70 dBA
-loudnessANCModel <- aov(loudness~NoiseType*SPL*ANC,data = dataRel %>% filter(Masker=="None"))
-summary(loudnessANCModel)
-loudnessANCModel1<-update(loudnessANCModel, . ~ . -NoiseType:SPL:ANC)
-summary(loudnessANCModel1)
-
-pcLoudnessANC<-TukeyHSD(loudnessANCModel1)
-
+```{r}
 #mean scores for ANC
-meanLoudnessANC <- dataRel %>%
+meanLoudnessANC <- data.subj.rel %>%
         filter(Masker=="None") %>%
         group_by(NoiseType, SPL, ANC) %>%
-        summarize(mean_loud=mean(loudness))
+        summarize(mean_loud=mean(loudness),
+                  logmean=10^mean(log10(loudness)))
+
+#normality test
+loudness.air.65dB <- data.subj.rel %>% 
+        dplyr::filter(SPL=="65dB" & NoiseType=="Aircraft") %>% 
+        dplyr::select(loudness)
+loudness.mrt.65dB <- data.subj.rel %>% 
+        dplyr::filter(SPL=="65dB" & NoiseType=="Train") %>% 
+        dplyr::select(loudness)
+loudness.tra.65dB <- data.subj.rel %>% 
+        dplyr::filter(SPL=="65dB" & NoiseType=="Traffic") %>% 
+        dplyr::select(loudness)
+
+shapiro.test(x = loudness.air.65dB$loudness)
+shapiro.test(x = loudness.mrt.65dB$loudness)
+shapiro.test(x = loudness.tra.65dB$loudness)
+
+#Aligned Rank Transformed ANOVA
+
+data.air<-data.subj.rel %>% dplyr::filter(SPL=="65dB" & NoiseType=="Aircraft")
+m.art.air = ARTool::art(loudness ~ Masker * ANC + (1|ID),
+                        data=data.air) 
+# linear mixed model syntax; see lme4::lmer
+anova(m.art.air)
+
+data.mrt<-data.subj.rel %>% dplyr::filter(SPL=="65dB" & NoiseType=="Train")
+m.art.mrt = ARTool::art(loudness ~ Masker * ANC + (1|ID),
+                        data=data.mrt) 
+# linear mixed model syntax; see lme4::lmer
+anova(m.art.mrt)
+
+data.tra<-data.subj.rel %>% dplyr::filter(SPL=="65dB" & NoiseType=="Traffic")
+m.art.tra = ARTool::art(loudness ~ Masker * ANC + (1|ID),
+                        data=data.tra) 
+# linear mixed model syntax; see lme4::lmer
+anova(m.art.tra)
+
+#ART Effects sizes using Cohen's d
+#https://cran.r-project.org/web/packages/ARTool/vignettes/art-effect-size.html#cohens-d
+m.linear.air <- lm(loudness ~ Masker * ANC, data=data.air)
+#PC with ANC conditions
+ANC.contrasts.air <- summary(art.con(m.art.air, "ANC",adjust = "bonferroni"))
+ANC.contrasts.air$d = ANC.contrasts.air$estimate / car::sigmaHat(m.linear.air)
+ANC.contrasts.air
+#PC with Maskers
+Masker.contrasts.air <- summary(art.con(m.art.air, "Masker",adjust = "bonferroni"))
+Masker.contrasts.air$d <- Masker.contrasts.air$estimate / car::sigmaHat(m.linear.air)
+Masker.contrasts.air
 
 
+m.linear.mrt <- lm(loudness ~ Masker * ANC, data=data.mrt)
+#PC with ANC conditions
+ANC.contrasts.mrt <- summary(art.con(m.art.mrt, "ANC",adjust = "bonferroni"))
+ANC.contrasts.mrt$d = ANC.contrasts.mrt$estimate / car::sigmaHat(m.linear.mrt)
+ANC.contrasts.mrt
+#PC with Maskers
+Masker.contrasts.mrt <- summary(art.con(m.art.mrt, "Masker",adjust = "bonferroni"))
+Masker.contrasts.mrt$d <- Masker.contrasts.mrt$estimate / car::sigmaHat(m.linear.mrt)
+Masker.contrasts.mrt
 
 
+m.linear.tra <- lm(loudness ~ Masker * ANC, data=data.tra)
+#PC with ANC conditions
+ANC.contrasts.tra <- summary(art.con(m.art.tra, "ANC",adjust = "bonferroni"))
+ANC.contrasts.tra$d = ANC.contrasts.tra$estimate / car::sigmaHat(m.linear.tra)
+ANC.contrasts.tra
+#PC with Maskers
+Masker.contrasts.tra <- summary(art.con(m.art.tra, "Masker",adjust = "bonferroni"))
+Masker.contrasts.tra$d <- Masker.contrasts.tra$estimate / car::sigmaHat(m.linear.tra)
+Masker.contrasts.tra
+
+#Generate table of ART ANOVA statistics for loudness
+#art anova main effect
+loudness.art.anova.stats <- 
+        rbind(as.data.frame(anova(m.art.air)) %>% 
+                      mutate(`Variable`="AIR",d="",Test="2W-ART ANOVA"),
+              as.data.frame(anova(m.art.mrt)) %>% 
+                      mutate(`Variable`="MRT",d="",Test="2W-ART ANOVA"),
+              as.data.frame(anova(m.art.tra)) %>% 
+                      mutate(`Variable`="TRA",d="",Test="2W-ART ANOVA")) %>%
+        dplyr::select(-`F`,-Df,-Df.res) %>%
+        `colnames<-`(c("Term","p-value","Variable","d","Test"))
+#contrast tests for masker
+loudness.art.anova.contrast.masker <- 
+        rbind(as.data.frame(Masker.contrasts.air) %>% 
+                      mutate(Variable="AIR",Test="ART Contrast"),
+              as.data.frame(Masker.contrasts.mrt) %>% 
+                      mutate(Variable="MRT",Test="ART Contrast"),
+              as.data.frame(Masker.contrasts.tra) %>% 
+                      mutate(Variable="TRA",Test="ART Contrast")) %>%
+                dplyr::select(-estimate, -SE, -df, -t.ratio) %>%
+                `colnames<-`(c("Term","p-value","d","Variable","Test"))
+
+#contrast tests for masker
+loudness.art.anova.contrast.anc <- 
+        rbind(as.data.frame(ANC.contrasts.air) %>% 
+                      mutate(Variable="AIR",Test="ART Contrast"),
+              as.data.frame(ANC.contrasts.mrt) %>% 
+                      mutate(Variable="MRT",Test="ART Contrast"),
+              as.data.frame(ANC.contrasts.tra) %>% 
+                      mutate(Variable="TRA",Test="ART Contrast")) %>%
+                dplyr::select(-estimate, -SE, -df, -t.ratio) %>%
+                `colnames<-`(c("Term","p-value","d","Variable","Test"))
+        
+loudness.art.anova.stats.tbl <- 
+        rbind(loudness.art.anova.stats[1,],
+              loudness.art.anova.contrast.masker %>% filter(Variable=="AIR"),
+              loudness.art.anova.stats[2,],
+              loudness.art.anova.contrast.anc %>% filter(Variable=="AIR"),
+              loudness.art.anova.stats[3:4,],
+              loudness.art.anova.contrast.masker %>% filter(Variable=="MRT"),
+              loudness.art.anova.stats[5,],
+              loudness.art.anova.contrast.anc %>% filter(Variable=="MRT"),
+              loudness.art.anova.stats[6:7,],
+              loudness.art.anova.contrast.masker %>% filter(Variable=="TRA"),
+              loudness.art.anova.stats[8,],
+              loudness.art.anova.contrast.anc %>% filter(Variable=="TRA"),
+              loudness.art.anova.stats[9,]) %>%
+        #rounding
+        mutate(d=as.numeric(d)) %>%
+        mutate(across(c("p-value","d"),round,4)) %>%
+        mutate(`p-value`=format(`p-value`),
+               `p-value`=ifelse(as.numeric(`p-value`)<0.0001,
+                                paste0(`p-value`,"****"),
+                        ifelse(as.numeric(`p-value`)<0.001,
+                               paste0(`p-value`,"***"),
+                               ifelse(as.numeric(`p-value`)<0.01,
+                                      paste0(`p-value`,"**"),
+                                      ifelse(as.numeric(`p-value`)<0.05,
+                                             paste0(`p-value`,"*"),`p-value`)))),
+               d=ifelse(is.na(d),"",d)) %>%
+        relocate(c("Variable","Term","Test")) %>%
+        `rownames<-`(NULL) %>%
+        kableExtra::kbl(booktabs = T, linesep = "",
+                        #row.names = NULL,
+                        #format = "latex",
+                        format = "html",
+                        label = "PLNANOVAstats",
+                        caption = "Summary of 2W-ART ANOVA, and relevant post-hoc 
+                        ART constrast tests for PLN.") %>%
+        #kable_styling(latex_table_env = "tabularx") %>%
+        kable_paper(full_width = T) %>%
+        collapse_rows(columns = 2, valign = "top") %>%
+        footnote(general = "*:p<0.05, **:p<0.01, ***:p<0.001, ****:p<0.0001") #%>%
+        #save_kable(paste0(getwd(),"/PLNANOVAstats.tex"))
+loudness.art.anova.stats.tbl        
 ```
 
-### PAQ
+### PAQ 3WMANOVA
 
 ```{r PAQ,message=FALSE}
 
 #ISO pleasant, ISO eventful
 
-dataRel <- dataRel %>%
+data.subj.rel <- data.subj.rel %>%
         #ISO 12913-3 normalise by (100+sqrt(20000))
         mutate(ISOPL=((pleasant-annoying)+cospi(0.25)*(calm-chaotic)+cospi(0.25)*(vibrant-monotonous))/(100+sqrt(20000))) %>%
         mutate(ISOEV=((eventful-uneventful)+cospi(0.25)*(chaotic-calm)+cospi(0.25)*(vibrant-monotonous))/(100+sqrt(20000)))
 
 ##three-way anova
 
-ISOPLModel <- aov(ISOPL ~ NoiseType * Masker * ANC, data=dataRel %>% filter(SPL=="65dB"))
+ISOPLModel <- aov(ISOPL ~ NoiseType * Masker * ANC, 
+                  data=data.subj.rel %>% filter(SPL=="65dB"))
 summary(ISOPLModel)
 
 ISOPLModel1<-update(ISOPLModel, . ~ . -NoiseType:Masker:ANC)
 summary(ISOPLModel1)
 
-etaSquared(ISOPLModel1)
+etaSquared(ISOPLModel)
 
-pcISOPL<-TukeyHSD(ISOPLModel1)
+pcISOPL<-TukeyHSD(ISOPLModel)
 
 #check for and remove non-complete cases
-dataRelComp <- dataRel %>% filter(complete.cases(.))
+dataRelComp <- data.subj.rel %>% filter(complete.cases(.))
 
-annoycatModel <- aov(annoycat ~ NoiseType * Masker * ANC, data=dataRelComp %>% filter(SPL=="65dB"))
-summary(annoycatModel)
-
-
-
+#annoycatModel <- aov(annoycat ~ NoiseType * Masker * ANC, 
+#                     data=dataRelComp %>% filter(SPL=="65dB"))
+#summary(annoycatModel)
 
 #mean scores
-mean65dB <- dataRel %>%
+mean65dB <- data.subj.rel %>%
         filter(SPL=="65dB") %>%
         group_by(NoiseType, Masker, ANC) %>%
         summarize(mu.ISOPL=mean(ISOPL),
