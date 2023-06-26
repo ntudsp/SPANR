@@ -1117,5 +1117,36 @@ g.BA.OtherdB<-baplotOpts(data = data.annoy.BA %>% ungroup %>%
 ggsave("./outputs/BAPlot_OtherdB.pdf",
        plot = g.BA.OtherdB, width = 1800, height = 700, units = "px",scale = 2)
 
+```
 
+### Summary stats
+
+```{r}
+
+dataRel.summary <- data.subj.rel %>%
+        dplyr::select(!c("ID","desc","annoycat","ISOEV","ISOPL")) %>%
+        #change order of factor
+        dplyr::mutate(Masker=factor(Masker,levels = c("None","Bird","Water"))) %>%
+        #filter(NoiseType=="Aircraft" & SPL=="65dB") %>%
+        group_by(NoiseType,Masker,SPL,ANC) %>%
+        dplyr::summarize(across(everything(), list(mean = mean, sd = sd)))
+
+dataRel.summary.tbl <- dataRel.summary %>%
+        mutate(across(2:21,round,2))%>%
+        kableExtra::kbl(booktabs = T, linesep = "",
+                        #row.names = NULL,
+                        #format = "latex",
+                        format = "html",
+                        #format = "rst",
+                        label = "qnDataSummary",
+                        caption = "Summary of questionnaire scores on perceived
+                        annoyance (PAY), perceived affective quality (PAQ), and
+                        perceived loudness (PLN)") %>%
+        #kable_styling(latex_table_env = "tabularx") %>%
+        kable_paper(full_width = T) %>%
+        collapse_rows(columns = 1:3, valign = "top") %>%
+        add_header_above(c(" " = 4, "PAY" = 2, 
+                           "PAQ" = 16, "PLN" = 2), bold = T) #%>%
+        #save_kable(paste0(getwd(),"/qnDataSummary.tex"))
+dataRel.summary.tbl
 ```
