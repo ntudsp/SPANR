@@ -19,6 +19,7 @@ require(RTHORR)
 require(lsr)
 require(MVN)
 require(rstatix)
+require(car)
 
 #formatting and graphics
 require(kableExtra)
@@ -1149,4 +1150,102 @@ dataRel.summary.tbl <- dataRel.summary %>%
                            "PAQ" = 16, "PLN" = 2), bold = T) #%>%
         #save_kable(paste0(getwd(),"/qnDataSummary.tex"))
 dataRel.summary.tbl
+```
+
+### ART Anova Annoyance
+
+```{r}
+
+shapiro.test(x = data.subj.rel$annoyscale)
+
+#Aligned Rank Transformed ANOVA
+m.art.annoyscale = ARTool::art(annoyscale ~ NoiseType * Masker * ANC + (1|ID), 
+                               data=data.subj.rel) 
+# linear mixed model syntax; see lme4::lmer
+art.anova.annoyance<-anova(m.art.annoyscale)
+
+#ART Effects sizes using Cohen's d
+#https://cran.r-project.org/web/packages/ARTool/vignettes/art-effect-size.html#cohens-d
+m.linear.annoyscale <- lm(annoyscale ~ NoiseType * Masker * ANC, 
+                          data=data.subj.rel)
+#PC with ANC conditions
+ANC.contrasts.annoyscale <- summary(art.con(m.art.annoyscale, "ANC",
+                                            adjust = "bonferroni"))
+ANC.contrasts.annoyscale$d = ANC.contrasts.annoyscale$estimate / 
+        car::sigmaHat(m.linear.annoyscale)
+ANC.contrasts.annoyscale
+#PC with Maskers
+Masker.contrasts.annoyscale <- summary(art.con(m.art.annoyscale,
+                                               "Masker",adjust = "bonferroni"))
+Masker.contrasts.annoyscale$d <- Masker.contrasts.annoyscale$estimate / 
+        car::sigmaHat(m.linear.annoyscale)
+Masker.contrasts.annoyscale
+#PC with NoiseType
+NoiseType.contrasts.annoyscale <- summary(art.con(m.art.annoyscale, "NoiseType",
+                                                  adjust = "bonferroni"))
+NoiseType.contrasts.annoyscale$d <- NoiseType.contrasts.annoyscale$estimate / car::sigmaHat(m.linear.annoyscale)
+NoiseType.contrasts.annoyscale
+#PC with Masker and ANC
+MaskANC.contrasts.annoyscale <- summary(art.con(m.art.annoyscale, "Masker:ANC",
+                                                adjust = "bonferroni"))
+MaskANC.contrasts.annoyscale$d <- NoiseType.contrasts.annoyscale$estimate / car::sigmaHat(m.linear.annoyscale)
+MaskANC.contrasts.annoyscale
+
+#Statistical test table for sentiment analysis
+annoy.art.anova.stat<- as.data.frame(art.anova.annoyance) %>% 
+        mutate(Test="3W-ART ANOVA", d="") %>%
+        dplyr::select(!c("F","Df","Df.res")) %>%
+        `rownames<-`(NULL) %>%
+        `colnames<-`(c("Term","p-value","Test","d")) %>%
+        relocate("Test",.after = "Term") %>%
+        mutate(`p-value`=round(`p-value`,4))
+
+annoy.stat.tbl <- rbind(annoy.art.anova.stat[1,], #noise type
+                        as.data.frame(NoiseType.contrasts.annoyscale) %>% 
+                                mutate(Test="ART Contrast") %>%
+                               dplyr::select(!c("estimate","SE","df",
+                                                "t.ratio")) %>%
+                                `colnames<-`(c("Term","p-value","d","Test")) %>%
+                                relocate("Test",.after = "Term") %>%
+                                mutate(across(c("p-value","d"),round,4)),
+                        annoy.art.anova.stat[2,], #masker
+                        as.data.frame(Masker.contrasts.annoyscale) %>% 
+                                mutate(Test="ART Contrast") %>%
+                               dplyr::select(!c("estimate","SE","df",
+                                                "t.ratio")) %>%
+                                `colnames<-`(c("Term","p-value","d","Test")) %>%
+                                relocate("Test",.after = "Term") %>%
+                                mutate(across(c("p-value","d"),round,4)),
+                        annoy.art.anova.stat[3,],
+                        as.data.frame(ANC.contrasts.annoyscale) %>% 
+                                mutate(Test="ART Contrast") %>%
+                               dplyr::select(!c("estimate","SE","df",
+                                                "t.ratio")) %>%
+                                `colnames<-`(c("Term","p-value","d","Test")) %>%
+                                relocate("Test",.after = "Term") %>%
+                                mutate(across(c("p-value","d"),round,4)),
+                        annoy.art.anova.stat[4:6,],
+                        as.data.frame(MaskANC.contrasts.annoyscale) %>% 
+                                mutate(Test="ART Contrast") %>%
+                               dplyr::select(!c("estimate","SE","df",
+                                                "t.ratio")) %>%
+                                `colnames<-`(c("Term","p-value","d","Test")) %>%
+                                relocate("Test",.after = "Term") %>%
+                                mutate(across(c("p-value","d"),round,4)),
+                        annoy.art.anova.stat[7,]) %>%
+        `rownames<-`(NULL) %>%
+        kableExtra::kbl(booktabs = T, linesep = "",
+                        #row.names = NULL,
+                        #format = "latex",
+                        format = "html",
+                        label = "annoyARTstats",
+                        caption = "Summary of ART ANOVA and relevant post-hoc 
+                        contrast tests for annoyance analysis") %>%
+        #kable_styling(latex_table_env = "tabularx") %>%
+        kable_paper(full_width = T) %>%
+        #collapse_rows(columns = 1:2, valign = "top") %>%
+        footnote(general = "*:p<0.05, **:p<0.01, ***:p<0.001, ****:p<0.0001") #%>%
+        #save_kable(paste0(getwd(),"/annoyARTstats.tex"))
+annoy.stat.tbl              
+
 ```
