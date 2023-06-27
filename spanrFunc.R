@@ -167,3 +167,16 @@ baplotOpts<-function(data,X,Y,color, #ggplot aes
                                                  vjust = 0.75, hjust=0.5))
 }
 
+ordinalReliability <- function(x){
+        #Polychoric correlation using Fox's method
+        poly.x <- POLYCHORIC_R(x, method = 'Fox',verbose = F)
+        
+        #alpha and omega
+        alpha.x <- MBESS::ci.reliability(S=poly.x,N=nrow(x),type = "alpha",interval.type='none')
+        omega.x <- MBESS::ci.reliability(S=poly.x,N=nrow(x),type = "omega",interval.type='none')
+        
+        print(paste0("Cronbach's Alpha (Ordinal): ",round(alpha.x$est,2)))
+        print(paste0("Mcdonald's Omega (Ordinal): ",round(omega.x$est,2)))
+        
+        return(list(alpha.x$est,omega.x$est,poly.x))
+}

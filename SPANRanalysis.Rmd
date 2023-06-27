@@ -90,7 +90,7 @@ for (name in data.names$df.name) {
 
 Examine the within-subject test-retest reliability of the subjective response data between stimuli #1 and #26
 
-```{r explr, message=FALSE}
+```{r reliable, message=FALSE}
 
 #no of participants from subjective response data
 noPart<-length(unique(data.l[["data.subj"]]$ID))
@@ -278,6 +278,7 @@ table.sv.att<- mean.sv.derived %>%
                         psychoacoustic indices before and after intervention, 
                         across both KEMAR HATS and energetic average measurements") %>%
         #kable_styling(latex_table_env = "tabularx") %>%
+        kable_styling(protect_latex = TRUE) %>%
         kable_paper(full_width = T) %>%
         add_header_above(c(" ", "65dB(A)" = 5, "70dB(A)" = 1, 
                            "65dB(A)" = 5, "70dB(A)" = 1, 
@@ -545,6 +546,7 @@ annoy.stat.tbl <- rbind(annoy.art.anova.stat[1,], #noise type
                         caption = "Summary of ART ANOVA and relevant post-hoc 
                         contrast tests for annoyance analysis") %>%
         #kable_styling(latex_table_env = "tabularx") %>%
+        kable_styling(protect_latex = TRUE) %>%
         kable_paper(full_width = T) %>%
         #collapse_rows(columns = 1:2, valign = "top") %>%
         footnote(general = "*:p<0.05, **:p<0.01, ***:p<0.001, ****:p<0.0001") #%>%
@@ -563,6 +565,11 @@ The circumplexity analysis is detailed in the section: [circumplexity analysis](
 ### ISOPL & ISOEV 3WMANOVA
 
 ```{r isoplev3wanova}
+
+data.subj.rel <- data.subj.rel %>%
+        #ISO 12913-3 normalise by (100+sqrt(20000))
+        mutate(ISOPL=((pleasant-annoying)+cospi(0.25)*(calm-chaotic)+cospi(0.25)*(vibrant-monotonous))/(100+sqrt(20000))) %>%
+        mutate(ISOEV=((eventful-uneventful)+cospi(0.25)*(chaotic-calm)+cospi(0.25)*(vibrant-monotonous))/(100+sqrt(20000)))
 
 #test for normality
 MVN::mvn(data = data.subj.rel %>% 
@@ -731,6 +738,7 @@ ISOPLEV.comb.stat.tbl <- ISOPLEV.comb.stat %>%
                         caption = "Summary of 3WMANOVA, post-hoc univariate 3WANOVA, and relevant post-hoc 
                         Tukey HSD tests for ISOPL and ISOEV. ") %>%
         #kable_styling(latex_table_env = "tabularx") %>%
+        kable_styling(protect_latex = TRUE) %>%
         kable_paper(full_width = T) %>%
         collapse_rows(columns = 1, valign = "top") %>%
         footnote(general = "*:p<0.05, **:p<0.01, ***:p<0.001, ****:p<0.0001") #%>%
@@ -966,12 +974,143 @@ loudness.art.anova.stats.tbl <-
                         caption = "Summary of 2W-ART ANOVA, and relevant post-hoc 
                         ART constrast tests for PLN.") %>%
         #kable_styling(latex_table_env = "tabularx") %>%
+        kable_styling(protect_latex = TRUE) %>%
         kable_paper(full_width = T) %>%
         collapse_rows(columns = 2, valign = "top") %>%
         footnote(general = "*:p<0.05, **:p<0.01, ***:p<0.001, ****:p<0.0001") #%>%
         #save_kable(paste0(getwd(),"/PLNANOVAstats.tex"))
 loudness.art.anova.stats.tbl        
 ```
+
+## Sentiment analysis
+
+Section 3.8
+
+This code block generates the summary statistics and two-way ART ANOVA statistics for the sentiment analysis, as shown in Table C.5 and C.6, respectively.
+
+```{r senti}
+
+#generate sentiment score for descriptions
+data.senti <- data.subj.rel %>%
+        dplyr::mutate(desc=gsub("\n"," ",desc)) %>%
+        dplyr::mutate(desc=iconv(desc, to = 'latin1')) %>%
+        rowwise() %>%
+        dplyr::mutate(senti=list(sentimentr::sentiment(desc)$sentiment)) %>%
+        #merge scores
+        dplyr::mutate(senti=mean(senti,na.rm=T))
+
+#summary statistics
+data.senti.summary.air <- data.senti %>%
+        dplyr::select(c("ID","NoiseType","Masker","ANC","SPL","senti")) %>%
+        dplyr::filter(NoiseType=="Aircraft" & SPL=="65dB") %>%
+        group_by(Masker,ANC) %>%
+        dplyr::summarize(senti.mean=mean(senti),senti.sd=sd(senti))
+
+data.senti.summary.mrt <- data.senti %>%
+        dplyr::select(c("ID","NoiseType","Masker","ANC","SPL","senti")) %>%
+        dplyr::filter(NoiseType=="Train" & SPL=="65dB") %>%
+        group_by(Masker,ANC) %>%
+        dplyr::summarize(senti.mean=mean(senti),senti.sd=sd(senti))
+
+data.senti.summary.tra <- data.senti %>%
+        dplyr::select(c("ID","NoiseType","Masker","ANC","SPL","senti")) %>%
+        dplyr::filter(NoiseType=="Traffic" & SPL=="65dB") %>%
+        group_by(Masker,ANC) %>%
+        dplyr::summarize(senti.mean=mean(senti),senti.sd=sd(senti))
+
+df.senti.air <- data.senti %>% dplyr::filter(NoiseType=="Aircraft")
+df.senti.mrt <- data.senti %>% dplyr::filter(NoiseType=="Train")
+df.senti.tra <- data.senti %>% dplyr::filter(NoiseType=="Traffic")
+
+#test for normality
+shapiro.test(x = df.senti.air$senti)
+shapiro.test(x = df.senti.mrt$senti)
+shapiro.test(x = df.senti.tra$senti)
+
+#Aligned Rank Transformed ANOVA
+m.art.senti.air = ARTool::art(senti ~  Masker * ANC + (1|ID), data=df.senti.air) 
+# linear mixed model syntax; see lme4::lmer
+art.anova.senti.air<-as.data.frame(anova(m.art.senti.air))
+
+#Aligned Rank Transformed ANOVA
+m.art.senti.mrt = ARTool::art(senti ~  Masker * ANC + (1|ID), data=df.senti.mrt) 
+# linear mixed model syntax; see lme4::lmer
+art.anova.senti.mrt<-as.data.frame(anova(m.art.senti.mrt))
+
+#Aligned Rank Transformed ANOVA
+m.art.senti.tra = ARTool::art(senti ~  Masker * ANC + (1|ID), data=df.senti.tra) 
+# linear mixed model syntax; see lme4::lmer
+art.anova.senti.tra<-as.data.frame(anova(m.art.senti.tra))
+
+#only PC for MRT
+#PC with Maskers
+m.linear.senti.mrt <- lm(senti ~ Masker * ANC, data=df.senti.mrt)
+Masker.contrasts.senti.mrt <- summary(art.con(m.art.senti.mrt, "Masker",
+                                              adjust = "bonferroni"))
+Masker.contrasts.senti.mrt$d <- Masker.contrasts.senti.mrt$estimate / car::sigmaHat(m.linear.senti.mrt)
+art.contra.senti.mrt<-as.data.frame(Masker.contrasts.senti.mrt)
+
+#Mean score table for sentiment analysis
+senti.summary.tbl <- rbind(data.senti.summary.air %>% mutate(`Noise Type`="AIR"),
+                           data.senti.summary.mrt %>% mutate(`Noise Type`="MRT"),
+                           data.senti.summary.tra %>% mutate(`Noise Type`="TRA")) %>%
+        `colnames<-`(c("Masker","ANC","Mean","SD","Noise Type")) %>%
+        mutate(across(c("Mean","SD"),round,2)) %>%
+        relocate("Noise Type") %>%
+        kableExtra::kbl(booktabs = T, linesep = "",
+                        #row.names = NULL,
+                        #format = "latex", #select latex mode to export to tex
+                        format = "html",
+                        label = "sentiARTsummary",
+                        caption = "Summary statistics of sentiment scores") %>%
+        #kable_styling(latex_table_env = "tabularx") %>%
+        kable_styling(protect_latex = TRUE) %>%
+        kable_paper(full_width = T) %>%
+        collapse_rows(columns = 1:3, valign = "top") #%>%
+        #save_kable(paste0(getwd(),"/sentiARTsummary.tex"))
+senti.summary.tbl
+
+#Statistical test table for sentiment analysis
+senti.stat.tbl <- rbind(art.anova.senti.air %>% mutate(`Noise Type`="AIR",
+                                                  Test="2W-ART ANOVA",
+                                                  p.value=`Pr(>F)`,
+                                                  d="") %>%
+                           dplyr::select(!c("F","Df","Df.res","Pr(>F)")),
+                   art.anova.senti.mrt %>% mutate(`Noise Type`="MRT",
+                                                  Test="2W-ART ANOVA",
+                                                  p.value=`Pr(>F)`,
+                                                  d="") %>%
+                           dplyr::select(!c("F","Df","Df.res","Pr(>F)")),
+                   art.contra.senti.mrt %>% mutate(`Noise Type`="MRT",
+                                                   Test="ART Contrast",
+                                                   Term=contrast,
+                                                   d=round(d,2)) %>%
+                           dplyr::select(!c("contrast","estimate","SE",
+                                            "df","t.ratio")),
+                   art.anova.senti.tra %>% mutate(`Noise Type`="TRA",
+                                                  Test="2W-ART ANOVA",
+                                                  p.value=`Pr(>F)`,
+                                                  d="") %>%
+                           dplyr::select(!c("F","Df","Df.res","Pr(>F)"))) %>%
+        mutate(p.value=round(p.value,4)) %>%
+        relocate(c("Noise Type","Test"),.before = "Term") %>%
+        `rownames<-`(NULL) %>%
+        kableExtra::kbl(booktabs = T, linesep = "",
+                        #row.names = NULL,
+                        #format = "latex",
+                        format = "html",
+                        label = "sentiARTstats",
+                        caption = "Summary of ART ANOVA and relevant post-hoc 
+                        contrast tests for sentiment analysis") %>%
+        #kable_styling(latex_table_env = "tabularx") %>%
+        kable_styling(protect_latex = TRUE) %>%
+        kable_paper(full_width = T) %>%
+        collapse_rows(columns = 1:2, valign = "top") %>%
+        footnote(general = "*:p<0.05, **:p<0.01, ***:p<0.001, ****:p<0.0001") #%>%
+        #save_kable(paste0(getwd(),"/sentiARTstats.tex"))
+senti.stat.tbl
+```
+
 
 ## Prediction of perceived annoyance and loudness
 
@@ -981,7 +1120,7 @@ Section 3.7
 
 This code block generates the Pearson's correlation across all objective and subjective indices as shown in Table C.7. 
 
-```{r}
+```{r corr}
 
 #generate single value table
 mean.sv.tbl <- mean.sv.derived %>% 
@@ -1182,7 +1321,6 @@ car::avPlots(m.annoy.obj)
 
 ```
 
-
 ### Predict loudness by noise type (subjective and objective scores)
 
 ```{r predictLoud}
@@ -1200,12 +1338,6 @@ step.model <- caret::train(loudness~.,
 step.model$results[step.model$bestTune[["nvmax"]],]
 coef(step.model$finalModel, step.model$bestTune[["nvmax"]])
 summary(step.model$finalModel)
-
-m.annoy.obj<-lm(annoyscale~`Max(C)`+`L10(A)`+S,
-                data=comb.obj.subj.mean)
-summary(m.annoy.obj)
-
-car::avPlots(m.annoy.obj)
 
 #loudness - aircraft only
 set.seed(2022)
@@ -1234,12 +1366,11 @@ step.model$results[step.model$bestTune[["nvmax"]],]
 coef(step.model$finalModel, step.model$bestTune[["nvmax"]])
 summary(step.model$finalModel)
 
-m.loud.air<-lm(mean_loud~`L(C)`,data=cbind(dv.unscaled.loud.air,
-                                 pred.unscaled.loud.air))
+m.loud.air<-lm(loudness~`L(C)`,data=meanPLN.air)
 summary(m.loud.air)
 
-ggplot(cbind(dv.unscaled.loud.air,pred.unscaled.loud.air), 
-       aes(x = `L(C)`, y = mean_loud)) + 
+ggplot(meanPLN.air, 
+       aes(x = `L(C)`, y = loudness)) + 
   geom_point() +
   stat_smooth(method = "lm", col = "red")
 
@@ -1269,8 +1400,7 @@ step.model$results[step.model$bestTune[["nvmax"]],]
 coef(step.model$finalModel, step.model$bestTune[["nvmax"]])
 summary(step.model$finalModel)
 
-m.loud.mrt<-lm(mean_loud~`L95(C)`+`L50(A)`,data=cbind(dv.unscaled.loud.mrt,
-                                 pred.unscaled.loud.mrt))
+m.loud.mrt<-lm(loudness~`L95(C)`+`L50(A)`,data=meanPLN.mrt)
 summary(m.loud.mrt)
 car::avPlots(m.loud.mrt)
 
@@ -1300,12 +1430,11 @@ step.model$results[step.model$bestTune[["nvmax"]],]
 coef(step.model$finalModel, step.model$bestTune[["nvmax"]])
 summary(step.model$finalModel)
 
-m.loud.tra<-lm(mean_loud~`N95`,data=cbind(dv.unscaled.loud.tra,
-                                 pred.unscaled.loud.tra))
+m.loud.tra<-lm(loudness~`N95`,data=meanPLN.tra)
 summary(m.loud.tra)
 
-ggplot(cbind(dv.unscaled.loud.tra,pred.unscaled.loud.tra), 
-       aes(x = `N95`, y = mean_loud)) + 
+ggplot(meanPLN.tra, 
+       aes(x = `N95`, y = loudness)) + 
   geom_point() +
   stat_smooth(method = "lm", col = "red")
 
@@ -1313,164 +1442,7 @@ ggplot(cbind(dv.unscaled.loud.tra,pred.unscaled.loud.tra),
 
 ```
 
-```{r predpayobj}
-#annoyance - no subjective predictors
-set.seed(2022)
-# Set up repeated k-fold cross-validation
-train.control <- caret::trainControl(method = "cv", number = 5)
-# Train the model
-step.model <- caret::train(annoyscale ~., 
-                           data = comb.obj.subj.mean %>% 
-                                   dplyr::select(!c("ISOPL","ISOEV","loudness")) %>%
-                                   dplyr::select(!c("Fluc5",
-                                                    "Fluc10","Fluc50","Fluc90","Fluc95",
-                                                    "L90(A)","L95(A)","L90(C)","L95(C)")),
-                    method = "leapSeq", 
-                    tuneGrid = data.frame(nvmax = 1:6),
-                    trControl = train.control)
-
-step.model$results[step.model$bestTune[["nvmax"]],]
-coef(step.model$finalModel, step.model$bestTune[["nvmax"]])
-summary(step.model$finalModel)
-
-m.annoy.obj<-lm(annoyscale~`Max(C)`+`L10(A)`+S,data=comb.obj.subj.mean)
-summary(m.annoy.obj)
-
-car::avPlots(m.annoy.obj)
-```
-
-## Sentiment analysis
-
-Section 3.8
-
-This code block generates the summary statistics and two-way ART ANOVA statistics for the sentiment analysis, as shown in Table C.5 and C.6, respectively.
-
-```{r senti}
-
-#generate sentiment score for descriptions
-data.senti <- data.subj.rel %>%
-        dplyr::mutate(desc=gsub("\n"," ",desc)) %>%
-        dplyr::mutate(desc=iconv(desc, to = 'latin1')) %>%
-        rowwise() %>%
-        dplyr::mutate(senti=list(sentimentr::sentiment(desc)$sentiment)) %>%
-        #merge scores
-        dplyr::mutate(senti=mean(senti,na.rm=T))
-
-#summary statistics
-data.senti.summary.air <- data.senti %>%
-        dplyr::select(c("ID","NoiseType","Masker","ANC","SPL","senti")) %>%
-        dplyr::filter(NoiseType=="Aircraft" & SPL=="65dB") %>%
-        group_by(Masker,ANC) %>%
-        dplyr::summarize(senti.mean=mean(senti),senti.sd=sd(senti))
-
-data.senti.summary.mrt <- data.senti %>%
-        dplyr::select(c("ID","NoiseType","Masker","ANC","SPL","senti")) %>%
-        dplyr::filter(NoiseType=="Train" & SPL=="65dB") %>%
-        group_by(Masker,ANC) %>%
-        dplyr::summarize(senti.mean=mean(senti),senti.sd=sd(senti))
-
-data.senti.summary.tra <- data.senti %>%
-        dplyr::select(c("ID","NoiseType","Masker","ANC","SPL","senti")) %>%
-        dplyr::filter(NoiseType=="Traffic" & SPL=="65dB") %>%
-        group_by(Masker,ANC) %>%
-        dplyr::summarize(senti.mean=mean(senti),senti.sd=sd(senti))
-
-df.senti.air <- data.senti %>% dplyr::filter(NoiseType=="Aircraft")
-df.senti.mrt <- data.senti %>% dplyr::filter(NoiseType=="Train")
-df.senti.tra <- data.senti %>% dplyr::filter(NoiseType=="Traffic")
-
-#test for normality
-shapiro.test(x = df.senti.air$senti)
-shapiro.test(x = df.senti.mrt$senti)
-shapiro.test(x = df.senti.tra$senti)
-
-#Aligned Rank Transformed ANOVA
-m.art.senti.air = ARTool::art(senti ~  Masker * ANC + (1|ID), data=df.senti.air) 
-# linear mixed model syntax; see lme4::lmer
-art.anova.senti.air<-as.data.frame(anova(m.art.senti.air))
-
-#Aligned Rank Transformed ANOVA
-m.art.senti.mrt = ARTool::art(senti ~  Masker * ANC + (1|ID), data=df.senti.mrt) 
-# linear mixed model syntax; see lme4::lmer
-art.anova.senti.mrt<-as.data.frame(anova(m.art.senti.mrt))
-
-#Aligned Rank Transformed ANOVA
-m.art.senti.tra = ARTool::art(senti ~  Masker * ANC + (1|ID), data=df.senti.tra) 
-# linear mixed model syntax; see lme4::lmer
-art.anova.senti.tra<-as.data.frame(anova(m.art.senti.tra))
-
-#only PC for MRT
-#PC with Maskers
-m.linear.senti.mrt <- lm(senti ~ Masker * ANC, data=df.senti.mrt)
-Masker.contrasts.senti.mrt <- summary(art.con(m.art.senti.mrt, "Masker",
-                                              adjust = "bonferroni"))
-Masker.contrasts.senti.mrt$d <- Masker.contrasts.senti.mrt$estimate / car::sigmaHat(m.linear.senti.mrt)
-art.contra.senti.mrt<-as.data.frame(Masker.contrasts.senti.mrt)
-
-#Mean score table for sentiment analysis
-senti.summary.tbl <- rbind(data.senti.summary.air %>% mutate(`Noise Type`="AIR"),
-                           data.senti.summary.mrt %>% mutate(`Noise Type`="MRT"),
-                           data.senti.summary.tra %>% mutate(`Noise Type`="TRA")) %>%
-        `colnames<-`(c("Masker","ANC","Mean","SD","Noise Type")) %>%
-        mutate(across(c("Mean","SD"),round,2)) %>%
-        relocate("Noise Type") %>%
-        kableExtra::kbl(booktabs = T, linesep = "",
-                        #row.names = NULL,
-                        #format = "latex", #select latex mode to export to tex
-                        format = "html",
-                        label = "sentiARTsummary",
-                        caption = "Summary statistics of sentiment scores") %>%
-        #kable_styling(latex_table_env = "tabularx") %>%
-        kable_styling(protect_latex = TRUE) %>%
-        kable_paper(full_width = T) %>%
-        collapse_rows(columns = 1:3, valign = "top") #%>%
-        #save_kable(paste0(getwd(),"/sentiARTsummary.tex"))
-senti.summary.tbl
-
-#Statistical test table for sentiment analysis
-senti.stat.tbl <- rbind(art.anova.senti.air %>% mutate(`Noise Type`="AIR",
-                                                  Test="2W-ART ANOVA",
-                                                  p.value=`Pr(>F)`,
-                                                  d="") %>%
-                           dplyr::select(!c("F","Df","Df.res","Pr(>F)")),
-                   art.anova.senti.mrt %>% mutate(`Noise Type`="MRT",
-                                                  Test="2W-ART ANOVA",
-                                                  p.value=`Pr(>F)`,
-                                                  d="") %>%
-                           dplyr::select(!c("F","Df","Df.res","Pr(>F)")),
-                   art.contra.senti.mrt %>% mutate(`Noise Type`="MRT",
-                                                   Test="ART Contrast",
-                                                   Term=contrast,
-                                                   d=round(d,2)) %>%
-                           dplyr::select(!c("contrast","estimate","SE",
-                                            "df","t.ratio")),
-                   art.anova.senti.tra %>% mutate(`Noise Type`="TRA",
-                                                  Test="2W-ART ANOVA",
-                                                  p.value=`Pr(>F)`,
-                                                  d="") %>%
-                           dplyr::select(!c("F","Df","Df.res","Pr(>F)"))) %>%
-        mutate(p.value=round(p.value,4)) %>%
-        relocate(c("Noise Type","Test"),.before = "Term") %>%
-        `rownames<-`(NULL) %>%
-        kableExtra::kbl(booktabs = T, linesep = "",
-                        #row.names = NULL,
-                        #format = "latex",
-                        format = "html",
-                        label = "sentiARTstats",
-                        caption = "Summary of ART ANOVA and relevant post-hoc 
-                        contrast tests for sentiment analysis") %>%
-        #kable_styling(latex_table_env = "tabularx") %>%
-        kable_styling(protect_latex = TRUE) %>%
-        kable_paper(full_width = T) %>%
-        collapse_rows(columns = 1:2, valign = "top") %>%
-        footnote(general = "*:p<0.05, **:p<0.01, ***:p<0.001, ****:p<0.0001") #%>%
-        #save_kable(paste0(getwd(),"/sentiARTstats.tex"))
-senti.stat.tbl
-```
-
-
 ## Appendix B
-
 
 ### Degree of agreement  {#agreement}
 
@@ -1601,6 +1573,7 @@ dataRel.summary.tbl <- dataRel.summary %>%
                         annoyance (PAY), perceived affective quality (PAQ), and
                         perceived loudness (PLN)") %>%
         #kable_styling(latex_table_env = "tabularx") %>%
+        kable_styling(latex_table_env = "tabularx") %>%
         kable_paper(full_width = T) %>%
         collapse_rows(columns = 1:3, valign = "top") %>%
         add_header_above(c(" " = 4, "PAY" = 2, 
@@ -1672,11 +1645,13 @@ cor.PAQ %>%
                chaotic=replace(chaotic,monotonous==1.00, "$P_2$"),
                chaotic=replace(chaotic,annoying==1.00, "$P_1$"))%>%
         kableExtra::kbl(booktabs = T, linesep = "",
+                        #format = "latex",
                         format = "html",
                         label = "corPCA",
                         caption = "Pearson's correlation and principal component
                         analysis loadings of PAQ attributes") %>%
         #kable_styling(latex_table_env = "tabularx") %>%
+        kable_styling(latex_table_env = "tabularx") %>%
         kable_paper(full_width = T) %>%
         add_header_above(c(" ", "Pearson's Correlation" = 8, 
                            "Loadings" = 2), bold = T) #%>%
